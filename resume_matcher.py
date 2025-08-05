@@ -1,154 +1,96 @@
 import os
-import time
-import requests # We will use this library for the upload
-from affinda import AffindaAPI, TokenCredential
-from affinda.models import Document
+import google.generativeai as genai
+import fitz  # PyMuPDF
 
-# 🔐 Your Affinda credentials
-API_KEY = "aff_b0bf82b14e079c85b79f203e46859a084bd18459"
-WORKSPACE_ID = "VRFFhNJa"
+# 🔐 IMPORTANT: Your Google AI API Key
+# 1. Go to https://aistudio.google.com/app/apikey
+# 2. Create and copy your API key.
+# 3. Paste it here.
+GOOGLE_API_KEY = "AIzaSyDCf69fCPciFRtS03L_BK_nRXxhzJ-2058"
 
 # 📄 Path to your resume file
-PDF_FILE_PATH = "Abishek resume.pdf"
+PDF_FILE_PATH = "M VISHAL - RESUME.pdf"
 
-def parse_resume():
+def parse_resume_with_ai():
     """
-    Uploads a resume to Affinda, waits for parsing, and prints the extracted data.
+    Parses a resume from a local PDF file using PyMuPDF to extract text
+    and the Google Gemini API to parse the structured data.
     """
-    # We still use the client for getting the document later
-    client = AffindaAPI(TokenCredential(API_KEY))
+    if GOOGLE_API_KEY == "YOUR_GOOGLE_API_KEY":
+        print("❌ Error: Please add your Google API Key to the script.")
+        return
 
     if not os.path.exists(PDF_FILE_PATH):
         print(f"❌ Error: File not found at '{PDF_FILE_PATH}'")
         return
 
-    # --- MANUAL UPLOAD BLOCK ---
-    # We are replacing the broken client.create_document() with a direct API call.
-    print("📤 Uploading resume...")
+    print("📄 Extracting text from resume PDF...")
     try:
-        # Prepare the request details
-        url = "https://api.affinda.com/v3/documents"
-        headers = {
-            "Authorization": f"Bearer {API_KEY}"
-        }
-        data = {
-            "workspace": WORKSPACE_ID
-        }
-        with open(PDF_FILE_PATH, "rb") as f:
-            files = {
-                "file": (os.path.basename(PDF_FILE_PATH), f, "application/pdf")
-            }
-            # Make the API call
-            response = requests.post(url, headers=headers, data=data, files=files)
-            # Raise an exception if the request failed
-            response.raise_for_status() 
-            
-            # Get the document ID from the successful response
-            response_json = response.json()
-            document_id = response_json['meta']['identifier']
+        # Use PyMuPDF (fitz) to open the document
+        doc = fitz.open(PDF_FILE_PATH)
+        raw_text = ""
+        for page in doc:
+            raw_text += page.get_text()
+        doc.close()
 
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Failed to upload document via requests: {e}")
-        # Print the API's response if available, it often has useful info
-        if e.response is not None:
-            print(f"API Response: {e.response.text}")
-        return
-    except Exception as e:
-        print(f"❌ An unexpected error occurred during upload: {e}")
-        return
-    # --- END OF MANUAL UPLOAD BLOCK ---
-
-
-    if not document_id:
-        raise RuntimeError("Failed to retrieve document ID after upload.")
-
-    print(f"📄 Document uploaded successfully. ID: {document_id}")
-    print("⏳ Waiting for parsing to complete...")
-
-    while True:
-        try:
-            # Now we switch back to the Affinda client
-            doc: Document = client.get_document(document_id)
-            
-            # Older SDKs use 'ready' and 'failed' boolean flags in the meta object
-            if doc.meta.ready:
-                print("✅ Parsing succeeded!\n")
-                break
-            elif doc.meta.failed:
-                # The 'error' attribute itself often contains the message string
-                error_detail = doc.meta.error or "Unknown reason"
-                print(f"❌ Parsing failed. Reason: {error_detail}")
-                return
-            else:
-                print("ℹ️  Document not ready, retrying...")
-
-        except Exception as e:
-            print(f"❌ An error occurred while checking status: {e}")
+        if not raw_text.strip():
+            print("⚠️ Could not extract any text. The PDF might be an image.")
             return
-            
-        time.sleep(2)
 
-    # The data object from an older SDK might not be mapped correctly,
-    # so we treat it as a dictionary for safety.
-    data = doc.data
-    if not data:
-        print("⚠️ No parsed data was returned.")
+    except Exception as e:
+        print(f"❌ Failed to extract text from PDF: {e}")
         return
 
-    print("===== Parsed Resume Summary =====")
-    
-    name_obj = data.get('name', {}) or {}
-    print(f"👤 Name: {name_obj.get('raw', 'N/A')}")
-    
-    emails = data.get('emails', []) or []
-    print(f"✉️ Email: {', '.join(e.get('raw', '') for e in emails) if emails else 'N/A'}")
+    print("🤖 Sending text to Gemini AI for parsing...")
+    try:
+        # Configure the Gemini API client
+        genai.configure(api_key=GOOGLE_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash')
 
-    phone_numbers = data.get('phoneNumbers', []) or []
-    print(f"📞 Phone: {', '.join(p.get('raw', '') for p in phone_numbers) if phone_numbers else 'N/A'}")
-    
-    location = data.get('location', {}) or {}
-    print(f"📍 Location: {location.get('raw', 'N/A')}")
+        # Create a detailed prompt for the AI to extract more fields
+        prompt = f"""
+        Act as an expert resume parser. Analyze the following raw text from a resume and extract a detailed, structured summary.
 
-    print("\n🛠 Skills:")
-    skills = data.get('skills', []) or []
-    if skills:
-        for skill in skills:
-            exp = f"({skill.get('experienceInMonths')} months)" if skill.get('experienceInMonths') else ""
-            print(f" - {skill.get('name', 'N/A')} {exp}")
-    else:
-        print(" - Not specified")
+        Please extract the following fields:
+        - Name
+        - Email
+        - Phone Number
+        - Skills (as a comma-separated list)
+        - Work Experience (list each job with title, company, and dates)
+        - Projects (list each project with its name and a brief description)
+        - Summary (a brief professional summary)
 
-    print("\n🎓 Education:")
-    education_entries = data.get('education', []) or []
-    if education_entries:
-        for edu in education_entries:
-            org = edu.get('organization', 'N/A')
-            accreditation = edu.get('accreditation', {}) or {}
-            degree = accreditation.get('education', 'N/A')
-            dates = edu.get('dates', {}) or {}
-            grad_date = dates.get('completionDate', 'N/A')
-            print(f" - {degree} from {org} (Graduated: {grad_date})")
-    else:
-        print(" - Not specified")
+        Resume Text:
+        ---
+        {raw_text}
+        ---
 
-    print("\n💼 Work Experience:")
-    work_experience = data.get('workExperience', []) or []
-    if work_experience:
-        for exp in work_experience:
-            dates = exp.get('dates', {}) or {}
-            start_date = dates.get('startDate', '?')
-            end_date = dates.get('endDate', 'Present')
-            print(f" - {exp.get('jobTitle', 'N/A')} at {exp.get('organization', 'N/A')} ({start_date} ➝ {end_date})")
-    else:
-        print(" - Not specified")
+        Please format the output clearly with each field on a new line. For example:
 
-    print("\n📋 Summary:")
-    # Corrected line: Access the 'raw' attribute from the summary object
-    summary_obj = data.get('summary', None)
-    print(summary_obj.get('raw', 'N/A') if summary_obj else 'N/A')
-    
-    print("\n====================================")
+        Name: Jane Doe
+        Email: jane.doe@example.com
+        Phone: (123) 456-7890
+        Skills: Python, SQL, Data Analysis, Machine Learning
+        Work Experience:
+        - Data Scientist at Tech Corp (Jan 2022 - Present)
+        - Junior Analyst at Data Inc (Jun 2020 - Dec 2021)
+        Projects:
+        - Customer Churn Prediction: Developed a model to predict customer churn with 95% accuracy.
+        - Sales Forecasting Tool: Built a tool to forecast future sales using time series analysis.
+        Summary: A highly motivated data scientist with 2 years of experience...
+        """
+
+        # Generate the content
+        response = model.generate_content(prompt)
+        
+        print("✅ AI parsing complete!\n")
+        print("===== Parsed Resume Summary =====")
+        print(response.text)
+        print("\n====================================")
+
+    except Exception as e:
+        print(f"❌ An error occurred with the Google AI API: {e}")
 
 
 if __name__ == "__main__":
-    parse_resume()
+    parse_resume_with_ai()
