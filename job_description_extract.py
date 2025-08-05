@@ -40,17 +40,17 @@ def match_skills(job_desc, skills, model, top_k=10):
 
     print("\n🔍 Top distinct matching skills:")
     for skill, score in sorted_skills:
-        print(f"✅ {skill} (score: {score:.4f})")
+        print(f" {skill} (score: {score:.4f})")
 
 
 def main():
     job_desc = input("Enter job description:\n> ").strip()
-    print("🔄 Loading model...")
+    print(" Loading model...")
     model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
-    print("🧠 Encoding job description...")
+    print(" Encoding job description...")
     skills = load_skills("skills.csv")
-    print(f"📋 Loaded {len(skills)} skills.")
+    print(f" Loaded {len(skills)} skills.")
 
     match_skills(job_desc, skills, model)
 
