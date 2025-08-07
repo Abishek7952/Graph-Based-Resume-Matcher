@@ -7,7 +7,7 @@ from Database_Storing import store_resume_data # Import the new storage function
 # --- CONFIGURATION ---
 
 #  IMPORTANT: Your Google AI API Key
-# Get yours from https://aistudio.google.com/app/apikey
+#  https://aistudio.google.com/app/apikey
 GOOGLE_API_KEY = "AIzaSyDCf69fCPciFRtS03L_BK_nRXxhzJ-2058"
 
 #  Path to your resume file
