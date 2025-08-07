@@ -1,71 +1,90 @@
+import os
 import json
+import google.generativeai as genai
 import fitz  # PyMuPDF
-from llama_cpp import Llama
+from pymongo import MongoClient  # 👈 MongoDB integration
 
-# ------------------- CONFIG --------------------
-MODEL_PATH = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"  # Update to your local model path
-PDF_PATH = "D:/NOSql Project/Abishek resume.pdf"     # ✅ Your resume PDF path here
-N_CTX = 5000  # Max context length
-N_THREADS = 4  # CPU threads to use
-# ------------------------------------------------
+# --- CONFIGURATION ---
 
-def extract_text_from_pdf(pdf_path):
-    doc = fitz.open(pdf_path)
-    full_text = ""
-    for page in doc:
-        full_text += page.get_text()
-    return full_text.strip()
+GOOGLE_API_KEY =  os.environ.get("GEMINI_API_KEY")
+PDF_FILE_PATH = r"D:\NOSql Project\Abishek resume.pdf"
 
-def build_prompt(resume_text):
-    return f"""
-You are an intelligent resume parser. Extract the following information from the resume text:
+MONGO_URI = "mongodb://localhost:27017"
+DB_NAME = "ResumeDB"
+COLLECTION_NAME = "resumes"
 
-- Full Name
-- Email ID
-- Phone Number
-- Skills (as a list)
-- Work Experience (as a list with the following fields for each entry):
-  - Role
-  - Summary (what they did in that role)
-  - Time Period (e.g., "Jan 2020 – Dec 2022")
-- List of Projects (each with title and a brief description)
+# --- MAIN LOGIC ---
 
-Respond only in valid JSON format.
+def parse_and_store_resume():
+    if GOOGLE_API_KEY == "YOUR_GOOGLE_API_KEY":
+        print("❌ Error: Please add your Google API Key.")
+        return
 
-Resume:
-\"\"\"{resume_text}\"\"\"
+    if not os.path.exists(PDF_FILE_PATH):
+        print(f"❌ Error: File not found at '{PDF_FILE_PATH}'")
+        return
 
-Respond only in valid JSON format.
-"""
-
-def run_llm(prompt):
-    llm = Llama(
-        model_path=MODEL_PATH,
-        n_ctx=N_CTX,
-        n_threads=N_THREADS,
-        verbose=False
-    )
-    output = llm(prompt, max_tokens=800, stop=["\n\n"], echo=False)
-    response_text = output["choices"][0]["text"]
+    print(f"📄 Extracting text from '{PDF_FILE_PATH}'...")
     try:
-        return json.loads(response_text)
+        doc = fitz.open(PDF_FILE_PATH)
+        raw_text = "".join(page.get_text() for page in doc)
+        doc.close()
+        if not raw_text.strip():
+            print("⚠️ Could not extract text. The PDF might be an image.")
+            return
+    except Exception as e:
+        print(f"❌ Failed to extract text from PDF: {e}")
+        return
+
+    print("🤖 Sending text to Gemini AI for JSON parsing...")
+    try:
+        genai.configure(api_key=GOOGLE_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
+        prompt = f"""
+        Act as an expert resume parser. Analyze the raw text below and convert it into a structured JSON object.
+        The JSON object must contain these exact keys: "name", "email", "phone", "skills", "work_experience", "projects", "summary".
+        - "skills" should be an array of strings.
+        - "work_experience" should be an array of objects, each with "title", "company", and "dates".
+        - "projects" should be an array of objects, each with "name" and "description".
+
+        Do not include any text or markdown formatting before or after the JSON object.
+
+        Resume Text:
+        ---
+        {raw_text}
+        ---
+        """
+        response = model.generate_content(prompt)
+
+        json_text = response.text.strip().replace("```json", "").replace("```", "")
+        parsed_data = json.loads(json_text)
+        print("✅ AI parsing successful.\n")
+
+        # 🖨️ Print the parsed data nicely
+        print("📋 Parsed Resume JSON Output:")
+        print(json.dumps(parsed_data, indent=4))
+
+
     except json.JSONDecodeError:
-        print("⚠️ Failed to parse JSON. Output:\n", response_text)
-        return None
+        print("❌ AI response was not valid JSON. Cannot store in database.")
+        print("--- AI Response ---")
+        print(response.text)
+        print("-------------------")
+        return
+    except Exception as e:
+        print(f"❌ An error occurred with the Google AI API: {e}")
+        return
 
-def main():
-    print(f"📄 Extracting text from: {PDF_PATH}")
-    resume_text = extract_text_from_pdf(PDF_PATH)
-
-    print("🧠 Running TinyLlama locally...")
-    prompt = build_prompt(resume_text)
-    result = run_llm(prompt)
-
-    if result:
-        print("✅ Parsed Resume:")
-        print(json.dumps(result, indent=2))
-    else:
-        print("❌ Resume parsing failed.")
+    print("💾 Saving to MongoDB...")
+    try:
+        client = MongoClient(MONGO_URI)
+        db = client[DB_NAME]
+        collection = db[COLLECTION_NAME]
+        result = collection.insert_one(parsed_data)
+        print(f"✅ Resume data stored with _id: {result.inserted_id}")
+    except Exception as e:
+        print(f"❌ MongoDB Error: {e}")
 
 if __name__ == "__main__":
-    main()
+    parse_and_store_resume()
