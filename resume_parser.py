@@ -106,7 +106,7 @@ def match_skills(sentences, skills, model, threshold=0.55, top_k=15):
 
 # -------------------------------
 # 6. Save to MongoDB
-def save_to_mongodb(data, db_name="ResumeDB", collection_name="resumes", mongo_uri="mongodb://localhost:27017"):
+def save_to_mongodb(data, db_name="Resume_Matcher", collection_name="resumes", mongo_uri="mongodb://localhost:27017"):
     try:
         client = MongoClient(mongo_uri)
         db = client[db_name]
