@@ -2,16 +2,16 @@ import os
 import json
 import google.generativeai as genai
 import fitz  # PyMuPDF
-from database import store_resume_data # Import the new storage function
+from Database_Storing import store_resume_data # Import the new storage function
 
 # --- CONFIGURATION ---
 
-# 🔐 IMPORTANT: Your Google AI API Key
+#  IMPORTANT: Your Google AI API Key
 # Get yours from https://aistudio.google.com/app/apikey
 GOOGLE_API_KEY = "AIzaSyDCf69fCPciFRtS03L_BK_nRXxhzJ-2058"
 
-# 📄 Path to your resume file
-PDF_FILE_PATH = "M VISHAL - RESUME.pdf"
+#  Path to your resume file
+PDF_FILE_PATH = "resume final one.pdf"
 
 
 # --- MAIN PARSING LOGIC ---
@@ -23,27 +23,27 @@ def parse_and_store_resume():
     """
     # --- Step 1: Pre-flight checks ---
     if GOOGLE_API_KEY == "YOUR_GOOGLE_API_KEY":
-        print("❌ Error: Please add your Google API Key.")
+        print(" Error: Please add your Google API Key.")
         return
     if not os.path.exists(PDF_FILE_PATH):
-        print(f"❌ Error: File not found at '{PDF_FILE_PATH}'")
+        print(f" Error: File not found at '{PDF_FILE_PATH}'")
         return
 
     # --- Step 2: Extract text from PDF ---
-    print(f"📄 Extracting text from '{PDF_FILE_PATH}'...")
+    print(f" Extracting text from '{PDF_FILE_PATH}'...")
     try:
         doc = fitz.open(PDF_FILE_PATH)
         raw_text = "".join(page.get_text() for page in doc)
         doc.close()
         if not raw_text.strip():
-            print("⚠️ Could not extract text. The PDF might be an image.")
+            print(" Could not extract text. The PDF might be an image.")
             return
     except Exception as e:
-        print(f"❌ Failed to extract text from PDF: {e}")
+        print(f" Failed to extract text from PDF: {e}")
         return
 
     # --- Step 3: Parse text with Gemini AI into JSON ---
-    print("🤖 Sending text to Gemini AI for JSON parsing...")
+    print(" Sending text to Gemini AI for JSON parsing...")
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -68,20 +68,20 @@ def parse_and_store_resume():
         # Clean up the response to ensure it's valid JSON
         json_text = response.text.strip().replace("```json", "").replace("```", "")
         parsed_data = json.loads(json_text)
-        print("✅ AI parsing successful.")
+        print(" AI parsing successful.")
 
     except json.JSONDecodeError:
-        print("❌ AI response was not valid JSON. Cannot store in database.")
+        print(" AI response was not valid JSON. Cannot store in database.")
         print("--- AI Response ---")
         print(response.text)
         print("-------------------")
         return
     except Exception as e:
-        print(f"❌ An error occurred with the Google AI API: {e}")
+        print(f" An error occurred with the Google AI API: {e}")
         return
 
     # --- Step 4: Call the storage function from the database module ---
-    print("💾 Passing data to the storage module...")
+    print(" Passing data to the storage module...")
     store_resume_data(parsed_data)
 
 
