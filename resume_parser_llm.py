@@ -2,7 +2,7 @@ import os
 import json
 import google.generativeai as genai
 import fitz  # PyMuPDF
-from pymongo import MongoClient  # 👈 MongoDB integration
+from pymongo import MongoClient  #  MongoDB integration
 
 # --- CONFIGURATION ---
 
@@ -17,26 +17,26 @@ COLLECTION_NAME = "resumes"
 
 def parse_and_store_resume():
     if GOOGLE_API_KEY == "YOUR_GOOGLE_API_KEY":
-        print("❌ Error: Please add your Google API Key.")
+        print(" Error: Please add your Google API Key.")
         return
 
     if not os.path.exists(PDF_FILE_PATH):
-        print(f"❌ Error: File not found at '{PDF_FILE_PATH}'")
+        print(f" Error: File not found at '{PDF_FILE_PATH}'")
         return
 
-    print(f"📄 Extracting text from '{PDF_FILE_PATH}'...")
+    print(f" Extracting text from '{PDF_FILE_PATH}'...")
     try:
         doc = fitz.open(PDF_FILE_PATH)
         raw_text = "".join(page.get_text() for page in doc)
         doc.close()
         if not raw_text.strip():
-            print("⚠️ Could not extract text. The PDF might be an image.")
+            print(" Could not extract text. The PDF might be an image.")
             return
     except Exception as e:
-        print(f"❌ Failed to extract text from PDF: {e}")
+        print(f" Failed to extract text from PDF: {e}")
         return
 
-    print("🤖 Sending text to Gemini AI for JSON parsing...")
+    print(" Sending text to Gemini AI for JSON parsing...")
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -59,32 +59,32 @@ def parse_and_store_resume():
 
         json_text = response.text.strip().replace("```json", "").replace("```", "")
         parsed_data = json.loads(json_text)
-        print("✅ AI parsing successful.\n")
+        print(" AI parsing successful.\n")
 
-        # 🖨️ Print the parsed data nicely
-        print("📋 Parsed Resume JSON Output:")
+        #  Print the parsed data nicely
+        print(" Parsed Resume JSON Output:")
         print(json.dumps(parsed_data, indent=4))
 
 
     except json.JSONDecodeError:
-        print("❌ AI response was not valid JSON. Cannot store in database.")
+        print(" AI response was not valid JSON. Cannot store in database.")
         print("--- AI Response ---")
         print(response.text)
         print("-------------------")
         return
     except Exception as e:
-        print(f"❌ An error occurred with the Google AI API: {e}")
+        print(f" An error occurred with the Google AI API: {e}")
         return
 
-    print("💾 Saving to MongoDB...")
+    print(" Saving to MongoDB...")
     try:
         client = MongoClient(MONGO_URI)
         db = client[DB_NAME]
         collection = db[COLLECTION_NAME]
         result = collection.insert_one(parsed_data)
-        print(f"✅ Resume data stored with _id: {result.inserted_id}")
+        print(f" Resume data stored with _id: {result.inserted_id}")
     except Exception as e:
-        print(f"❌ MongoDB Error: {e}")
+        print(f" MongoDB Error: {e}")
 
 if __name__ == "__main__":
     parse_and_store_resume()

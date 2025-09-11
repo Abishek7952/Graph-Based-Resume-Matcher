@@ -59,9 +59,9 @@ def save_to_mongodb(data, db_name="Resume_Matcher", collection_name="JD_skills",
         db = client[db_name]
         collection = db[collection_name]
         result = collection.insert_one(data)
-        print(f"✅ Saved to MongoDB with _id: {result.inserted_id}")
+        print(f"Saved to MongoDB with _id: {result.inserted_id}")
     except Exception as e:
-        print(f"❌ MongoDB error: {e}")
+        print(f" MongoDB error: {e}")
 
 # --- 4. Main Execution ---
 if __name__ == "__main__":
