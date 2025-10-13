@@ -31,7 +31,7 @@ def extract_skills_with_gemini(job_description):
     JSON Output:
     """
 
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model = genai.GenerativeModel('gemini-2.5-flash-latest')
 
     try:
         response = model.generate_content(prompt)

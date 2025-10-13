@@ -39,7 +39,7 @@ def parse_and_store_resume():
     print(" Sending text to Gemini AI for JSON parsing...")
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
 
         prompt = f"""
         Act as an expert resume parser. Analyze the raw text below and convert it into a structured JSON object.
