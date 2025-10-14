@@ -1,7 +1,10 @@
 import React, { useState } from "react";
 import API from "../api";
+import ResumeDisplay from "./ResumeDisplay"; 
+import JobRecommendationCard from "./JobRecommendationCard"; // 👈 1. IMPORT THE NEW COMPONENT
 
 const ParseResume = () => {
+  // ... (your existing state and handleSubmit function remain the same)
   const [file, setFile] = useState(null);
   const [resumeData, setResumeData] = useState(null);
   const [recommendations, setRecommendations] = useState([]);
@@ -28,30 +31,26 @@ const ParseResume = () => {
   return (
     <div style={{ padding: "40px" }}>
       <h2>User Dashboard – Upload Resume</h2>
+      {/* ... (your form remains the same) ... */}
       <form onSubmit={handleSubmit}>
         <input type="file" accept=".pdf" onChange={(e) => setFile(e.target.files[0])} />
         <button type="submit">Upload & Get Jobs</button>
       </form>
-
-      {resumeData && (
-        <div style={{ marginTop: "20px" }}>
-          <h3>Extracted Resume Data:</h3>
-          <pre>{JSON.stringify(resumeData, null, 2)}</pre>
-        </div>
-      )}
-
+      
+      {resumeData && <ResumeDisplay data={resumeData} />}
+      
+      {/* ▼▼▼ 2. REPLACE THE OLD RECOMMENDATIONS LIST WITH THIS ▼▼▼ */}
       {recommendations.length > 0 && (
         <div style={{ marginTop: "30px" }}>
           <h3>🎯 Recommended Jobs</h3>
-          <ul>
+          <div>
             {recommendations.map((job, idx) => (
-              <li key={idx}>
-                <b>{job.job_title || "Untitled Job"}</b> — {job.matchedSkills} matched skills
-              </li>
+              <JobRecommendationCard key={idx} job={job} />
             ))}
-          </ul>
+          </div>
         </div>
       )}
+      {/* ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ */}
     </div>
   );
 };

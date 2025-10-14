@@ -1,5 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse # Changed from FileResponse
+from pymongo import MongoClient
+import gridfs # Add GridFS
+from bson.objectid import ObjectId 
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 from passlib.context import CryptContext
@@ -26,11 +29,12 @@ genai.configure(api_key=GEMINI_API_KEY)
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["Resume_Matcher"]
+fs = gridfs.GridFS(db)
 
 # Neo4j Config
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "vishal2004")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "12345678")
 neo4j_driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 # Password hashing
@@ -79,26 +83,44 @@ def push_jobs_to_neo4j():
     print("✅ Jobs pushed to Neo4j.")
 
 
+# ... (all other code in main.py remains the same) ...
+
 def push_resumes_to_neo4j():
     resumes = list(db["resumes"].find())
     with neo4j_driver.session() as session:
         for resume in resumes:
             resume_id = str(resume["_id"])
+            file_id = resume.get("gridfs_file_id", "")
+            
+            # --- FIX: Read from the simple, flat JSON structure ---
             name = resume.get("name", "Unknown")
+            email = resume.get("email", "N/A")
+            phone = resume.get("phone", "N/A")
+            summary = resume.get("summary", "No summary available.")
+            
             skills = resume.get("skills", [])
+            # If skills is a dictionary (which it might be), flatten the values
+            if isinstance(skills, dict):
+                flat_skills = []
+                for skill_list in skills.values():
+                    flat_skills.extend(skill_list)
+                skills = flat_skills
 
             session.run("""
                 MERGE (r:Resume {id:$resume_id})
-                SET r.name=$name
-            """, resume_id=resume_id, name=name)
+                SET r.name=$name, r.file_id=$file_id, r.email=$email, r.phone=$phone, r.summary=$summary
+            """, resume_id=resume_id, name=name, file_id=file_id, email=email, phone=phone, summary=summary)
 
             for skill in skills:
-                session.run("MERGE (s:Skill {name:$skill})", skill=skill)
-                session.run("""
-                    MATCH (r:Resume {id:$resume_id}), (s:Skill {name:$skill})
-                    MERGE (r)-[:HAS]->(s)
-                """, resume_id=resume_id, skill=skill)
-    print("✅ Resumes pushed to Neo4j.")
+                # Ensure skill is a string before creating a node
+                if isinstance(skill, str):
+                    session.run("MERGE (s:Skill {name:$skill})", skill=skill)
+                    session.run("""
+                        MATCH (r:Resume {id:$resume_id}), (s:Skill {name:$skill})
+                        MERGE (r)-[:HAS]->(s)
+                    """, resume_id=resume_id, skill=skill)
+    print("✅ Resumes (with corrected flat details) pushed to Neo4j.")
+# ... (rest of main.py remains the same) ...
 
 
 def recommend_jobs(resume_id, limit=5):
@@ -119,12 +141,14 @@ def recommend_jobs(resume_id, limit=5):
             })
     return recommendations
 
-
 def eligible_applicants(job_id):
     with neo4j_driver.session() as session:
+        # Add the new fields to the RETURN statement
         result = session.run("""
             MATCH (j:Job {id:$job_id})-[:REQUIRES]->(s:Skill)<-[:HAS]-(r:Resume)
-            RETURN r.id AS resume_id, r.name AS resume_name, count(s) AS matchedSkills
+            RETURN r.id AS resume_id, r.name AS resume_name, r.file_id AS file_id, 
+                   r.email AS email, r.phone AS phone, r.summary AS summary, 
+                   count(s) AS matchedSkills
             ORDER BY matchedSkills DESC
         """, job_id=job_id)
         applicants = []
@@ -132,6 +156,10 @@ def eligible_applicants(job_id):
             applicants.append({
                 "resume_id": record["resume_id"],
                 "resume_name": record["resume_name"],
+                "file_id": record["file_id"],
+                "email": record["email"],         # Add email
+                "phone": record["phone"],         # Add phone
+                "summary": record["summary"],     # Add summary
                 "matchedSkills": record["matchedSkills"]
             })
     return applicants
@@ -188,13 +216,19 @@ def parse_resume_with_gemini(pdf_path: str):
         return {"error": f"Failed to extract text: {e}"}
 
     prompt = f"""
-    Act as an expert resume parser. Analyze the text below and return a structured JSON object.
-    JSON must include: name, email, phone, skills (list), work_experience, projects, summary.
-    Resume:
-    ---
-    {raw_text}
-    ---
-    """
+            Act as an expert resume parser. Analyze the text below and return a structured JSON object.
+            The JSON structure must include:
+            - "personal_information": {{ "name": "...", "contact_details": {{ "email": "...", "phone": "..." }} }}
+            - "career_objective": "..."
+            - "skills": {{ "languages": [...], "frameworks": [...] }}
+            - "professional_experience": [{{ "title": "...", "company": "...", "responsibilities": [...] }}]
+            - "projects": [{{ "title": "...", "details": [...] }}]
+            
+            Resume Text:
+            ---
+            {raw_text}
+            ---
+            """
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(prompt)
@@ -206,29 +240,44 @@ def parse_resume_with_gemini(pdf_path: str):
 
 @app.post("/parse_resume/")
 async def parse_resume(file: UploadFile = File(...)):
-    """User uploads resume -> parse -> save -> sync Neo4j -> return recommended jobs"""
+    """User uploads resume -> parse -> save to GridFS -> sync -> return recommendations"""
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(await file.read())
-            tmp_path = tmp.name
+        file_content = await file.read()
+        
+        with fitz.open(stream=file_content, filetype="pdf") as doc:
+            raw_text = "".join(page.get_text() for page in doc)
+            if not raw_text.strip():
+                return JSONResponse(content={"status": "failed", "error": "No text in PDF"}, status_code=400)
+            
+            prompt = f"""Act as an expert resume parser. Analyze the text below and return a structured JSON object.
+            JSON must include: name, email, phone, skills (list), work_experience, projects, summary.
+            Resume:\n---\n{raw_text}\n---"""
 
-        parsed_data = parse_resume_with_gemini(tmp_path)
-        if "error" in parsed_data:
-            return JSONResponse(content={"status": "failed", "error": parsed_data["error"]}, status_code=400)
+            # 👇 FIX: Enable JSON Mode to ensure a clean JSON response
+            model = genai.GenerativeModel(
+                "gemini-2.5-flash",
+                generation_config={"response_mime_type": "application/json"}
+            )
+            
+            safety_settings = {'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE', 'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE', 'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE', 'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE'}
+            response = model.generate_content(prompt, safety_settings=safety_settings)
 
+            # Now, response.text is guaranteed to be a clean JSON string
+            parsed_data = json.loads(response.text)
+
+        # ... (the rest of your function remains the same) ...
+        file_id = fs.put(file_content, filename=file.filename)
+        parsed_data['gridfs_file_id'] = str(file_id)
         result = db["resumes"].insert_one(parsed_data)
-        parsed_data["_id"] = str(result.inserted_id)
-        os.remove(tmp_path)
-
+        parsed_data['_id'] = str(result.inserted_id)
+        resume_id = str(result.inserted_id)
         push_resumes_to_neo4j()
-        print("✅ Done pushing resume data to Neo4j")
-
-        # Get recommended jobs for this resume
-        recs = recommend_jobs(str(parsed_data["_id"]))
-
+        recs = recommend_jobs(resume_id)
         return {"status": "success", "data": parsed_data, "recommendations": recs}
     except Exception as e:
+        traceback.print_exc()
         return JSONResponse(content={"status": "failed", "error": str(e)}, status_code=500)
+    
 
 # ---------------------------------------------------------------------------
 # 6️⃣ Job Description Skill Extraction (Gemini + MongoDB + Neo4j)
@@ -243,15 +292,16 @@ def extract_skills_with_gemini(job_description: str):
     Output JSON: {{ "skills": [ "Python", "SQL", ... ] }}
     """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel(
+            "gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
         response = model.generate_content(prompt)
-        text = response.text.strip()
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        json_str = text[start:end] if start != -1 else "{}"
-        data = json.loads(json_str)
+        data = json.loads(response.text)
         return data.get("skills", [])
     except Exception as e:
+        # 👇 ADD THIS LINE to see the full error in your terminal
+        traceback.print_exc() 
         return {"error": str(e)}
 
 
@@ -291,6 +341,17 @@ def get_recommendations(resume_id: str):
 def get_eligible_applicants(job_id: str):
     applicants = eligible_applicants(job_id)
     return {"applicants": applicants}
+
+
+@app.get("/download_resume/{file_id}")
+def download_resume(file_id: str):
+    """Retrieves a resume from GridFS and streams it for download."""
+    try:
+        gridfs_file = fs.get(ObjectId(file_id))
+        return StreamingResponse(gridfs_file, media_type='application/pdf', 
+                                 headers={"Content-Disposition": f"attachment; filename=\"{gridfs_file.filename}\""})
+    except gridfs.errors.NoFile:
+        return JSONResponse(content={"error": "File not found"}, status_code=404)
 
 # ---------------------------------------------------------------------------
 # 8️⃣ Root Endpoint
