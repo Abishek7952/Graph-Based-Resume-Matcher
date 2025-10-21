@@ -198,11 +198,10 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
                     {proj.description && (
                       <ul style={{ margin: 0, paddingLeft: 18 }}>
                         {proj.description
-                          .split(/(?<=[.!?])\s+|\n/) // split on ". ", "? ", "! " or line breaks
-                          .map((point) => point.trim())
+                          .split(". ")
                           .filter(Boolean)
                           .map((point, idx) => (
-                            <li key={idx}>{point}</li>
+                            <li key={idx}>{point.trim()}.</li>
                           ))}
                       </ul>
                     )}
