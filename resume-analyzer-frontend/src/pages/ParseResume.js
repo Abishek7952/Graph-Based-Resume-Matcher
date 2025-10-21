@@ -1,16 +1,18 @@
 import React, { useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import API from "../api";
 import ResumeDisplay from "./ResumeDisplay";
 import JobRecommendationCard from "./JobRecommendationCard";
 
 const THEME = {
-  primary: "#0f62fe", // modern indigo-blue
+  primary: "#0f62fe",
   surface: "#ffffff",
   muted: "#6b7280",
   bg: "#f4f6fb",
 };
 
 const ParseResume = () => {
+  const navigate = useNavigate(); // for redirect
   const [file, setFile] = useState(null);
   const [resumeData, setResumeData] = useState(null);
   const [recommendations, setRecommendations] = useState([]);
@@ -24,7 +26,6 @@ const ParseResume = () => {
       setFile(null);
       return;
     }
-    // simple validation
     if (f.type !== "application/pdf") {
       setErrorMsg("Only PDF resumes are accepted. Please upload a PDF file.");
       setFile(null);
@@ -57,7 +58,6 @@ const ParseResume = () => {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
-      // defensive: accept multiple shapes
       const parsed = res?.data?.data ?? res?.data ?? null;
       const recs = res?.data?.recommendations ?? res?.recommendations ?? [];
 
@@ -81,9 +81,36 @@ const ParseResume = () => {
     setErrorMsg("");
   };
 
+  // Logout handler
+  const handleLogout = () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    navigate("/"); // redirect to login
+  };
+
   return (
-    <div style={{ padding: 28, background: THEME.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, Arial" }}>
+    <div style={{ padding: 28, background: THEME.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, Arial", position: "relative" }}>
+      
+      {/* Logout button top-right */}
+      <div style={{ position: "absolute", top: 20, right: 28 }}>
+        <button
+          onClick={handleLogout}
+          style={{
+            padding: "8px 14px",
+            borderRadius: 10,
+            border: "1px solid #e6e9ee",
+            background: "#fff",
+            color: THEME.primary,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          Logout
+        </button>
+      </div>
+
       <div style={{ maxWidth: 1200, margin: "0 auto", display: "grid", gridTemplateColumns: "1fr 420px", gap: 24 }}>
+        
         {/* LEFT: Upload + Resume */}
         <div>
           <div style={{
@@ -189,7 +216,6 @@ const ParseResume = () => {
                 </button>
 
                 <div style={{ marginLeft: "auto", color: THEME.muted, alignSelf: "center", fontSize: 13 }}>
-                  {/* small hint */}
                   Tip: keep CV concise — we match keywords to jobs.
                 </div>
               </div>
