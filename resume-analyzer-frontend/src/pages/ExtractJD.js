@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import API from "../api";
 
 // Helper component for SVG Icons to keep the main component clean
@@ -19,6 +20,7 @@ const Icons = {
 };
 
 const ExtractJD = () => {
+  const navigate = useNavigate(); // <-- added for logout navigation
   const [jobDescription, setJobDescription] = useState("");
   const [skills, setSkills] = useState([]);
   const [applicants, setApplicants] = useState([]);
@@ -27,7 +29,7 @@ const ExtractJD = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!jobDescription.trim()) return;
-    
+
     setLoading(true);
     setSkills([]);
     setApplicants([]);
@@ -46,6 +48,13 @@ const ExtractJD = () => {
     }
   };
 
+  // Logout handler
+  const handleLogout = () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    navigate("/"); // redirect to login
+  };
+
   return (
     <div style={styles.page}>
       <header style={styles.header}>
@@ -53,7 +62,24 @@ const ExtractJD = () => {
           <Icon path={Icons.briefcase} color="#fff" />
           <h1>TalentGraph</h1>
         </div>
-        <p style={styles.tagline}>Intelligent Resume Matching</p>
+        <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+          <p style={styles.tagline}>Intelligent Resume Matching</p>
+          <button
+            onClick={handleLogout}
+            style={{
+              padding: "8px 14px",
+              borderRadius: "8px",
+              border: "1px solid #fff",
+              backgroundColor: "transparent",
+              color: "#fff",
+              fontWeight: "bold",
+              cursor: "pointer",
+              transition: "0.2s",
+            }}
+          >
+            Logout
+          </button>
+        </div>
       </header>
 
       <div style={styles.container}>
@@ -88,15 +114,15 @@ const ExtractJD = () => {
           <div style={styles.resultsContainer}>
             {loading && (
               <div style={styles.placeholder}>
-                 <div style={styles.spinner}></div>
-                 <p>Scanning candidates...</p>
+                <div style={styles.spinner}></div>
+                <p>Scanning candidates...</p>
               </div>
             )}
-            
+
             {!loading && skills.length === 0 && applicants.length === 0 && (
-                <div style={styles.placeholder}>
-                    <p style={styles.placeholderText}>Your matched candidates will appear here.</p>
-                </div>
+              <div style={styles.placeholder}>
+                <p style={styles.placeholderText}>Your matched candidates will appear here.</p>
+              </div>
             )}
 
             {skills.length > 0 && (
@@ -115,7 +141,7 @@ const ExtractJD = () => {
 
             {applicants.length > 0 && (
               <div style={styles.section}>
-                 <div style={styles.subtitleWrapper}>
+                <div style={styles.subtitleWrapper}>
                   <Icon path={Icons.candidates} color="#4A5568" />
                   <h3 style={styles.subtitle}>Top Matched Applicants</h3>
                 </div>
@@ -139,7 +165,6 @@ const ExtractJD = () => {
                         <span><Icon path={Icons.phone} size="16px" color="#555" /> {r.phone || 'N/A'}</span>
                       </div>
                       <p style={styles.summary}>
-                        {/* FIX: Truncate the long summary */}
                         {(r.summary || 'No summary provided.').substring(0, 250)}
                         {r.summary && r.summary.length > 250 ? '...' : ''}
                       </p>
@@ -157,6 +182,9 @@ const ExtractJD = () => {
     </div>
   );
 };
+
+
+
 
 
 // Professional & Aesthetic Styles

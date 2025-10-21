@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 
 const ResumeDisplay = ({ data = {}, theme = null }) => {
-  // fallback theme
   const THEME = theme ?? {
     primary: "#0f62fe",
     muted: "#6b7280",
@@ -20,6 +19,7 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
     skills = [],
     work_experience = [],
     education = [],
+    projects = [],
     ...other
   } = data;
 
@@ -28,21 +28,51 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
   const copyToClipboard = (text) => {
     if (!text) return;
     navigator.clipboard?.writeText(text).then(() => {
-      // small visual confirmation could be added
       alert("Copied to clipboard");
     });
   };
 
+  // Helper to render array values in Profile table
+  const renderValue = (v) => {
+    if (Array.isArray(v)) {
+      // if array contains objects
+      if (v.length > 0 && typeof v[0] === "object") {
+        return (
+          <ul style={{ margin: 0, paddingLeft: 16 }}>
+            {v.map((item, idx) => (
+              <li key={idx}>
+                {item.name ? <strong>{item.name}</strong> : JSON.stringify(item)}
+                {item.description ? `: ${item.description}` : ""}
+              </li>
+            ))}
+          </ul>
+        );
+      } else {
+        return v.join(", "); // simple array of strings
+      }
+    }
+    return v; // primitive value
+  };
+
   return (
-    <div style={{
-      background: THEME.surface,
-      padding: 20,
-      borderRadius: 12,
-      boxShadow: "0 6px 18px rgba(12,20,50,0.06)"
-    }}>
+    <div
+      style={{
+        background: THEME.surface,
+        padding: 20,
+        borderRadius: 12,
+        boxShadow: "0 6px 18px rgba(12,20,50,0.06)",
+      }}
+    >
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
         <div style={{ flex: 1 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: 12,
+            }}
+          >
             <div>
               <h3 style={{ margin: "0 0 6px 0" }}>{name ?? "Anonymous Candidate"}</h3>
               <div style={{ color: THEME.muted, fontSize: 13 }}>
@@ -61,7 +91,7 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
                   padding: "8px 10px",
                   borderRadius: 8,
                   cursor: "pointer",
-                  fontSize: 13
+                  fontSize: 13,
                 }}
                 title="Copy parsed JSON"
               >
@@ -85,7 +115,7 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
                       border: "none",
                       color: THEME.primary,
                       cursor: "pointer",
-                      fontWeight: 700
+                      fontWeight: 700,
                     }}
                   >
                     {expanded ? "Show less" : "Read more"}
@@ -100,26 +130,81 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
             <div style={{ color: THEME.muted, marginBottom: 8 }}>Profile</div>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <tbody>
-                {Object.entries({ email, phone, location, ...other }).filter(([_, v]) => v).map(([k, v]) => (
-                  <tr key={k}>
-                    <td style={{ width: 140, padding: "8px 10px", background: "#fbfdff", fontWeight: 700, textTransform: "capitalize" }}>{k.replace("_", " ")}</td>
-                    <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f3f6", color: "#333" }}>{Array.isArray(v) ? v.join(", ") : v}</td>
-                  </tr>
-                ))}
+                {Object.entries({ email, phone, location, ...other })
+                  .filter(([_, v]) => v)
+                  .map(([k, v]) => (
+                    <tr key={k}>
+                      <td
+                        style={{
+                          width: 140,
+                          padding: "8px 10px",
+                          background: "#fbfdff",
+                          fontWeight: 700,
+                          textTransform: "capitalize",
+                        }}
+                      >
+                        {k.replace("_", " ")}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 10px",
+                          borderBottom: "1px solid #f1f3f6",
+                          color: "#333",
+                        }}
+                      >
+                        {renderValue(v)}
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
 
           {/* Education */}
-          {education && education.length > 0 && (
+          {education.length > 0 && (
             <div style={{ marginTop: 18 }}>
               <div style={{ color: THEME.muted, marginBottom: 8 }}>Education</div>
               <div style={{ display: "grid", gap: 10 }}>
                 {education.map((edu, i) => (
                   <div key={i} style={{ padding: 12, borderRadius: 8, background: "#fbfdff" }}>
                     <div style={{ fontWeight: 700 }}>{edu.degree ?? edu.institution ?? "Education"}</div>
-                    <div style={{ color: THEME.muted, fontSize: 13 }}>{edu.institution ?? edu.degree} · {edu.year ?? ""}</div>
+                    <div style={{ color: THEME.muted, fontSize: 13 }}>
+                      {edu.institution ?? edu.degree} · {edu.year ?? ""}
+                    </div>
                     {edu.details && <div style={{ marginTop: 8 }}>{edu.details}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Projects */}
+          {projects.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ color: THEME.muted, marginBottom: 8 }}>Projects</div>
+              <div style={{ display: "grid", gap: 12 }}>
+                {projects.map((proj, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      padding: 12,
+                      borderRadius: 8,
+                      background: "#fbfdff",
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                      Project {i + 1}: {proj.name ?? "Unnamed Project"}
+                    </div>
+                    {proj.description && (
+                      <ul style={{ margin: 0, paddingLeft: 18 }}>
+                        {proj.description
+                          .split(". ")
+                          .filter(Boolean)
+                          .map((point, idx) => (
+                            <li key={idx}>{point.trim()}.</li>
+                          ))}
+                      </ul>
+                    )}
                   </div>
                 ))}
               </div>
@@ -134,14 +219,19 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
             <div style={{ color: THEME.muted, marginBottom: 8 }}>Skills</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {(skills.length ? skills : ["No skills found"]).map((s, idx) => (
-                <div key={idx} style={{
-                  padding: "8px 10px",
-                  borderRadius: 999,
-                  background: s ? THEME.primary : "#f1f5f9",
-                  color: s ? "#fff" : THEME.muted,
-                  fontWeight: 600,
-                  fontSize: 13
-                }}>{s || "—"}</div>
+                <div
+                  key={idx}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 999,
+                    background: s ? THEME.primary : "#f1f5f9",
+                    color: s ? "#fff" : THEME.muted,
+                    fontWeight: 600,
+                    fontSize: 13,
+                  }}
+                >
+                  {s || "—"}
+                </div>
               ))}
             </div>
           </div>
@@ -154,10 +244,25 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
                 <div style={{ color: THEME.muted, fontSize: 13 }}>No work experience extracted.</div>
               ) : (
                 work_experience.map((job, i) => (
-                  <div key={i} style={{ padding: 10, borderRadius: 8, background: "#fff", boxShadow: "0 4px 12px rgba(12,20,50,0.03)" }}>
+                  <div
+                    key={i}
+                    style={{
+                      padding: 10,
+                      borderRadius: 8,
+                      background: "#fff",
+                      boxShadow: "0 4px 12px rgba(12,20,50,0.03)",
+                    }}
+                  >
                     <div style={{ fontWeight: 700 }}>{job.title ?? "Job Title"}</div>
-                    <div style={{ color: THEME.muted, fontSize: 12 }}>{job.company ?? "Company"} · {job.dates ?? ""}</div>
-                    {job.description && <div style={{ marginTop: 8, fontSize: 13 }}>{job.description.slice(0, 160)}{job.description.length > 160 ? "..." : ""}</div>}
+                    <div style={{ color: THEME.muted, fontSize: 12 }}>
+                      {job.company ?? "Company"} · {job.dates ?? ""}
+                    </div>
+                    {job.description && (
+                      <div style={{ marginTop: 8, fontSize: 13 }}>
+                        {job.description.slice(0, 160)}
+                        {job.description.length > 160 ? "..." : ""}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
