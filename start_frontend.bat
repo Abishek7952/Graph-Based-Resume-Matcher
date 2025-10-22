@@ -1,6 +1,6 @@
 @echo off
 echo Starting Frontend Development Server...
 echo.
-cd frontend
-npm run dev
+cd resume-analyzer-frontend
+npm start
 
