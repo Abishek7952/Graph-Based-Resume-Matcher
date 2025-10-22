@@ -443,15 +443,21 @@ Return only valid JSON. If a field is missing, you may omit it. Make the structu
 
 
 @app.post("/parse_resume/")
-async def parse_resume(file: UploadFile = File(...)):
-    """User uploads resume -> parse -> save to GridFS -> sync -> return recommendations"""
+async def parse_resume(file: UploadFile = File(...), username: str = Form(...)):
+    """
+    User uploads resume -> parse -> save with username -> sync -> return recommendations.
+    The resume is persistent for each user even after logout or server restart.
+    """
     try:
         file_content = await file.read()
 
         with fitz.open(stream=file_content, filetype="pdf") as doc:
             raw_text = "".join(page.get_text() for page in doc)
             if not raw_text.strip():
-                return JSONResponse(content={"status": "failed", "error": "No text in PDF"}, status_code=400)
+                return JSONResponse(
+                    content={"status": "failed", "error": "No text in PDF"},
+                    status_code=400
+                )
 
         prompt = f"""Act as an expert resume parser. Analyze the text below and return a structured JSON object.
         JSON must include: name, email, phone, skills (list), work_experience, projects, summary.
@@ -472,17 +478,32 @@ async def parse_resume(file: UploadFile = File(...)):
         response = model.generate_content(prompt, safety_settings=safety_settings)
         parsed_data = json.loads(response.text)
 
+        # Save the resume file to GridFS
         file_id = fs.put(file_content, filename=file.filename)
         parsed_data['gridfs_file_id'] = str(file_id)
 
+        # ✅ Associate resume with the logged-in username
+        parsed_data['username'] = username
+
+        # Remove any previous resume from this user (optional)
+        existing = db["resumes"].find_one({"username": username})
+        if existing:
+            db["resumes"].delete_one({"username": username})
+            try:
+                if existing.get("gridfs_file_id"):
+                    fs.delete(ObjectId(existing["gridfs_file_id"]))
+            except Exception:
+                pass
+
+        # Insert the new parsed resume
         result = db["resumes"].insert_one(parsed_data)
         parsed_data['_id'] = str(result.inserted_id)
         resume_id = str(result.inserted_id)
 
-        # Push resume to Neo4j for matching
+        # Push resume to Neo4j for recommendations
         push_resumes_to_neo4j()
 
-        # ✅ Updated recommendation logic
+        # Get job recommendations
         with neo4j_driver.session() as session:
             recs_result = session.run("""
                 MATCH (r:Resume {id:$resume_id})-[:HAS]->(s:Skill)<-[:REQUIRES]-(j:Job)
@@ -507,7 +528,10 @@ async def parse_resume(file: UploadFile = File(...)):
 
     except Exception as e:
         traceback.print_exc()
-        return JSONResponse(content={"status": "failed", "error": str(e)}, status_code=500)
+        return JSONResponse(
+            content={"status": "failed", "error": str(e)},
+            status_code=500
+        )
 
 
 
