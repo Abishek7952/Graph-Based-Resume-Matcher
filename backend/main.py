@@ -443,8 +443,8 @@ Return only valid JSON. If a field is missing, you may omit it. Make the structu
 
 
 @app.post("/parse_resume/")
-async def parse_resume(file: UploadFile = File(...), username: str = Form(None)):
-    """User uploads resume -> parse -> save to GridFS -> normalize -> sync -> return recommendations"""
+async def parse_resume(file: UploadFile = File(...)):
+    """User uploads resume -> parse -> save to GridFS -> sync -> return recommendations"""
     try:
         file_content = await file.read()
 
