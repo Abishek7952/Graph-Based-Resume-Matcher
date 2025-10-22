@@ -5,6 +5,5 @@ venv
 .env
 # Ignore compiled Python files
 *.pyc
-./__pycache__
 __pycache__/
-*.pyc
+pyvenv.cfg
