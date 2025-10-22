@@ -1,0 +1,6 @@
+*.pdf
+*.csv
+# Ignore Python virtual environment
+.venv/
+.env
+venv/
