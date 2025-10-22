@@ -193,18 +193,21 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
                     }}
                   >
                     <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                      Project {i + 1}: {proj.name ?? "Unnamed Project"}
+                      Project {i + 1}: {proj.name }
                     </div>
-                    {proj.description && (
+                    {proj.description ? (
                       <ul style={{ margin: 0, paddingLeft: 18 }}>
-                        {proj.description
+                        {String(proj.description) // safely convert to string
                           .split(". ")
                           .filter(Boolean)
                           .map((point, idx) => (
-                            <li key={idx}>{point.trim()}.</li>
+                            <li key={idx}>{point.trim().endsWith(".") ? point.trim() : point.trim() + "."}</li>
                           ))}
                       </ul>
+                    ) : (
+                      <p style={{ margin: 0, color: "#666" }}>No description available.</p>
                     )}
+
                   </div>
                 ))}
               </div>
