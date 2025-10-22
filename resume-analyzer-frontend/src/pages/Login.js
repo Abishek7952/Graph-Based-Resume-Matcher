@@ -15,10 +15,13 @@ const Login = () => {
       const formData = new FormData();
       formData.append("username", username);
       formData.append("password", password);
-  
+
       const res = await API.post("/login/", formData);
-  
+
       if (res.data.status === "success") {
+        // Save username to localStorage so we can fetch user's saved resume later
+        localStorage.setItem("username", username);
+
         alert("✅ Login successful!");
         if (res.data.role === "admin") {
           navigate("/extract_jd_skills");
@@ -35,7 +38,6 @@ const Login = () => {
       setLoading(false);
     }
   };
-  
 
   return (
     <div style={styles.container}>

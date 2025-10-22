@@ -1,10 +1,9 @@
 from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse # Changed from FileResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pymongo import MongoClient
-import gridfs # Add GridFS
-from bson.objectid import ObjectId 
+import gridfs
+from bson.objectid import ObjectId
 from fastapi.middleware.cors import CORSMiddleware
-from pymongo import MongoClient
 from passlib.context import CryptContext
 from neo4j import GraphDatabase
 import google.generativeai as genai
@@ -46,7 +45,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 app = FastAPI(
     title="Resume & JD Analyzer API with Neo4j Integration",
     description="FastAPI + Gemini + MongoDB + Neo4j Integration",
-    version="3.5"
+    version="3.6"
 )
 
 app.add_middleware(
@@ -58,8 +57,203 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# 3️⃣ Helper Functions — Neo4j Sync Logic
+# 3️⃣ Helper Functions — Normalization & Neo4j Sync Logic
 # ---------------------------------------------------------------------------
+
+def normalize_parsed_resume(parsed):
+    """
+    Normalize different possible Gemini outputs into a consistent schema:
+    returns dict with keys:
+      - name (str)
+      - email (str)
+      - phone (str)
+      - summary (str)
+      - skills (list[str])
+      - professional_experience (list[dict]) each with title/company/dates/responsibilities(list)
+      - projects (list[dict]) each with title/details(list)
+      - personal_information (dict) - optional original-style wrapper
+      - parsed_raw (original parsed dict) - kept for debugging
+    This function is defensive and tolerant of many input shapes.
+    """
+    try:
+        if not isinstance(parsed, dict):
+            return {"error": "parsed is not a dict", "parsed_raw": parsed}
+
+        out = {}
+        out['parsed_raw'] = parsed  # keep original for debugging
+
+        # --- Name/email/phone extraction ---
+        name = parsed.get("name") or parsed.get("full_name") or None
+
+        personal = parsed.get("personal_information") or parsed.get("personalInfo") or parsed.get("personal") or {}
+        email = parsed.get("email") or ""
+        phone = parsed.get("phone") or ""
+
+        if isinstance(personal, dict):
+            if not name:
+                name = personal.get("name") or personal.get("full_name")
+            contact = personal.get("contact_details") or personal.get("contact") or {}
+            if isinstance(contact, dict):
+                email = email or contact.get("email") or ""
+                phone = phone or contact.get("phone") or ""
+
+        # fallback searches
+        if not email:
+            def find_email(obj):
+                if isinstance(obj, str):
+                    if "@" in obj and "." in obj.split("@")[-1]:
+                        return obj
+                if isinstance(obj, dict):
+                    for v in obj.values():
+                        e = find_email(v)
+                        if e:
+                            return e
+                if isinstance(obj, list):
+                    for item in obj:
+                        e = find_email(item)
+                        if e:
+                            return e
+                return None
+            email = find_email(parsed) or ""
+
+        if not phone:
+            def find_phone(obj):
+                if isinstance(obj, str):
+                    digits = "".join(ch for ch in obj if ch.isdigit())
+                    if 7 <= len(digits) <= 15:
+                        return obj
+                if isinstance(obj, dict):
+                    for v in obj.values():
+                        p = find_phone(v)
+                        if p:
+                            return p
+                if isinstance(obj, list):
+                    for item in obj:
+                        p = find_phone(item)
+                        if p:
+                            return p
+                return None
+            phone = find_phone(parsed) or ""
+
+        out['name'] = name or ""
+        out['email'] = email or ""
+        out['phone'] = phone or ""
+
+        # --- Summary / career objective ---
+        summary = parsed.get("summary") or parsed.get("career_objective") or parsed.get("objective") or ""
+        if not summary and isinstance(personal, dict):
+            summary = personal.get("summary") or personal.get("career_objective") or ""
+        out['summary'] = summary or ""
+
+        # --- Skills --- normalize to list[str]
+        skills = []
+        raw_skills = parsed.get("skills") or parsed.get("skillset") or parsed.get("technical_skills") or {}
+        if isinstance(raw_skills, dict):
+            for v in raw_skills.values():
+                if isinstance(v, list):
+                    skills.extend([str(x).strip() for x in v if x])
+                elif isinstance(v, str):
+                    skills.extend([s.strip() for s in v.split(",") if s.strip()])
+        elif isinstance(raw_skills, list):
+            for s in raw_skills:
+                if isinstance(s, str):
+                    skills.append(s.strip())
+                elif isinstance(s, dict):
+                    skills.append(s.get("name") or s.get("skill") or str(s))
+                else:
+                    skills.append(str(s))
+        elif isinstance(raw_skills, str):
+            skills = [s.strip() for s in raw_skills.split(",") if s.strip()]
+
+        seen = set()
+        clean_skills = []
+        for s in skills:
+            key = s.lower()
+            if key not in seen and s:
+                seen.add(key)
+                clean_skills.append(s)
+        out['skills'] = clean_skills
+
+        # --- Professional Experience normalization ---
+        pro = parsed.get("professional_experience") or parsed.get("work_experience") or parsed.get("experience") or []
+        normalized_exp = []
+        if isinstance(pro, dict):
+            for k, v in pro.items():
+                if isinstance(v, dict):
+                    normalized_exp.append({
+                        "title": v.get("title") or v.get("role") or "",
+                        "company": k,
+                        "dates": v.get("dates") or v.get("duration") or "",
+                        "responsibilities": v.get("responsibilities") or v.get("responsibility") or v.get("tasks") or []
+                    })
+                elif isinstance(v, list):
+                    for ent in v:
+                        if isinstance(ent, dict):
+                            normalized_exp.append({
+                                "title": ent.get("title") or ent.get("role") or "",
+                                "company": k,
+                                "dates": ent.get("dates") or ent.get("duration") or "",
+                                "responsibilities": ent.get("responsibilities") or ent.get("tasks") or []
+                            })
+        elif isinstance(pro, list):
+            for item in pro:
+                if isinstance(item, dict):
+                    title = item.get("title") or item.get("role") or item.get("position") or ""
+                    company = item.get("company") or item.get("employer") or ""
+                    dates = item.get("dates") or item.get("duration") or item.get("period") or ""
+                    resp = item.get("responsibilities") or item.get("responsibility") or item.get("tasks") or item.get("description") or []
+                    if isinstance(resp, str):
+                        resp = [r.strip() for r in resp.split(".") if r.strip()]
+                    normalized_exp.append({
+                        "title": title,
+                        "company": company,
+                        "dates": dates,
+                        "responsibilities": resp if isinstance(resp, list) else [str(resp)]
+                    })
+                elif isinstance(item, str):
+                    normalized_exp.append({
+                        "title": "",
+                        "company": "",
+                        "dates": "",
+                        "responsibilities": [item]
+                    })
+        out['professional_experience'] = normalized_exp
+
+        # --- Projects normalization ---
+        proj = parsed.get("projects") or parsed.get("personal_projects") or parsed.get("project") or []
+        normalized_projects = []
+        if isinstance(proj, dict):
+            for pname, pdetail in proj.items():
+                if isinstance(pdetail, dict):
+                    details = pdetail.get("details") or pdetail.get("description") or pdetail.get("points") or []
+                    if isinstance(details, str):
+                        details = [d.strip() for d in details.split(".") if d.strip()]
+                    normalized_projects.append({
+                        "title": pname,
+                        "details": details if isinstance(details, list) else [str(details)]
+                    })
+        elif isinstance(proj, list):
+            for p in proj:
+                if isinstance(p, dict):
+                    title = p.get("title") or p.get("name") or ""
+                    details = p.get("details") or p.get("description") or p.get("points") or []
+                    if isinstance(details, str):
+                        details = [d.strip() for d in details.split(".") if d.strip()]
+                    normalized_projects.append({
+                        "title": title,
+                        "details": details if isinstance(details, list) else [str(details)]
+                    })
+                elif isinstance(p, str):
+                    normalized_projects.append({"title": p, "details": []})
+        out['projects'] = normalized_projects
+
+        out['personal_information'] = personal if isinstance(personal, dict) else {}
+
+        return out
+    except Exception:
+        traceback.print_exc()
+        return {"error": "normalization_failed", "parsed_raw": parsed}
+
 
 def push_jobs_to_neo4j():
     jobs = list(db["JD_skills"].find())
@@ -83,27 +277,25 @@ def push_jobs_to_neo4j():
     print("✅ Jobs pushed to Neo4j.")
 
 
-# ... (all other code in main.py remains the same) ...
-
 def push_resumes_to_neo4j():
     resumes = list(db["resumes"].find())
     with neo4j_driver.session() as session:
         for resume in resumes:
-            resume_id = str(resume["_id"])
+            resume_id = str(resume.get("_id"))
             file_id = resume.get("gridfs_file_id", "")
-            
-            # --- FIX: Read from the simple, flat JSON structure ---
-            name = resume.get("name", "Unknown")
-            email = resume.get("email", "N/A")
-            phone = resume.get("phone", "N/A")
-            summary = resume.get("summary", "No summary available.")
-            
-            skills = resume.get("skills", [])
-            # If skills is a dictionary (which it might be), flatten the values
+
+            # prefer normalized fields when available
+            name = resume.get("name") or resume.get("parsed_raw", {}).get("name") or "Unknown"
+            email = resume.get("email") or resume.get("parsed_raw", {}).get("email") or "N/A"
+            phone = resume.get("phone") or resume.get("parsed_raw", {}).get("phone") or "N/A"
+            summary = resume.get("summary") or resume.get("parsed_raw", {}).get("summary") or "No summary available."
+
+            skills = resume.get("skills") or []
             if isinstance(skills, dict):
                 flat_skills = []
                 for skill_list in skills.values():
-                    flat_skills.extend(skill_list)
+                    if isinstance(skill_list, list):
+                        flat_skills.extend(skill_list)
                 skills = flat_skills
 
             session.run("""
@@ -112,7 +304,6 @@ def push_resumes_to_neo4j():
             """, resume_id=resume_id, name=name, file_id=file_id, email=email, phone=phone, summary=summary)
 
             for skill in skills:
-                # Ensure skill is a string before creating a node
                 if isinstance(skill, str):
                     session.run("MERGE (s:Skill {name:$skill})", skill=skill)
                     session.run("""
@@ -120,7 +311,6 @@ def push_resumes_to_neo4j():
                         MERGE (r)-[:HAS]->(s)
                     """, resume_id=resume_id, skill=skill)
     print("✅ Resumes (with corrected flat details) pushed to Neo4j.")
-# ... (rest of main.py remains the same) ...
 
 
 def recommend_jobs(resume_id, limit=5):
@@ -141,9 +331,9 @@ def recommend_jobs(resume_id, limit=5):
             })
     return recommendations
 
+
 def eligible_applicants(job_id):
     with neo4j_driver.session() as session:
-        # Add the new fields to the RETURN statement
         result = session.run("""
             MATCH (j:Job {id:$job_id})-[:REQUIRES]->(s:Skill)<-[:HAS]-(r:Resume)
             RETURN r.id AS resume_id, r.name AS resume_name, r.file_id AS file_id, 
@@ -157,9 +347,9 @@ def eligible_applicants(job_id):
                 "resume_id": record["resume_id"],
                 "resume_name": record["resume_name"],
                 "file_id": record["file_id"],
-                "email": record["email"],         # Add email
-                "phone": record["phone"],         # Add phone
-                "summary": record["summary"],     # Add summary
+                "email": record["email"],
+                "phone": record["phone"],
+                "summary": record["summary"],
                 "matchedSkills": record["matchedSkills"]
             })
     return applicants
@@ -175,12 +365,11 @@ def signup(username: str = Form(...), password: str = Form(...)):
         if existing:
             return JSONResponse(content={"status": "failed", "message": "User already exists"}, status_code=400)
 
-        # Hash the full password safely (no truncation)
         hashed_pwd = pwd_context.hash(password)
         db["users"].insert_one({"username": username, "password": hashed_pwd})
         return {"status": "success", "message": "User registered successfully"}
     except Exception as e:
-        import traceback
+        traceback.print_exc()
         return JSONResponse(content={"status": "error", "details": str(e), "trace": traceback.format_exc()}, status_code=500)
 
 
@@ -199,13 +388,15 @@ def login(username: str = Form(...), password: str = Form(...)):
 
     return {"status": "success", "role": "user", "redirect": "/parse_resume"}
 
-
-
 # ---------------------------------------------------------------------------
 # 5️⃣ Resume Parsing (Gemini + MongoDB + Neo4j)
 # ---------------------------------------------------------------------------
 
 def parse_resume_with_gemini(pdf_path: str):
+    """
+    Reads a PDF file and asks Gemini to produce structured JSON.
+    Returns either a dict (parsed JSON) or {'error': '...'} on failure.
+    """
     try:
         doc = fitz.open(pdf_path)
         raw_text = "".join(page.get_text() for page in doc)
@@ -213,71 +404,158 @@ def parse_resume_with_gemini(pdf_path: str):
         if not raw_text.strip():
             return {"error": "No extractable text found in PDF"}
     except Exception as e:
+        traceback.print_exc()
         return {"error": f"Failed to extract text: {e}"}
 
     prompt = f"""
-            Act as an expert resume parser. Analyze the text below and return a structured JSON object.
-            The JSON structure must include:
-            - "personal_information": {{ "name": "...", "contact_details": {{ "email": "...", "phone": "..." }} }}
-            - "career_objective": "..."
-            - "skills": {{ "languages": [...], "frameworks": [...] }}
-            - "professional_experience": [{{ "title": "...", "company": "...", "responsibilities": [...] }}]
-            - "projects": [{{ "title": "...", "details": [...] }}]
-            
-            Resume Text:
-            ---
-            {raw_text}
-            ---
-            """
+Act as an expert resume parser. Analyze the text below and return a structured JSON object.
+The JSON structure should include (but adapt if necessary):
+- "personal_information": {{ "name": "...", "contact_details": {{ "email": "...", "phone": "..." }} }}
+- "career_objective": "..."
+- "skills": {{ "languages": [...], "frameworks": [...], "tools": [...] }} OR a flat list ["Python","SQL",...]
+- "professional_experience": [{{ "title": "...", "company": "...", "dates": "...", "responsibilities": [...] }}]
+- "projects": [{{ "title": "...", "details": [...] }}]
+
+Resume Text:
+---
+{raw_text}
+---
+
+Return only valid JSON. If a field is missing, you may omit it. Make the structure JSON-first so it can be parsed programmatically.
+"""
+
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(prompt)
-        json_text = response.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(json_text)
+        json_text = response.text.strip()
+        json_text = json_text.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(json_text)
+        return parsed
     except Exception as e:
-        return {"error": str(e)}
+        traceback.print_exc()
+        return {"error": f"Gemini parse failed: {str(e)}"}
 
 
 @app.post("/parse_resume/")
-async def parse_resume(file: UploadFile = File(...)):
-    """User uploads resume -> parse -> save to GridFS -> sync -> return recommendations"""
+async def parse_resume(file: UploadFile = File(...), username: str = Form(None)):
+    """User uploads resume -> parse -> save to GridFS -> normalize -> sync -> return recommendations"""
     try:
         file_content = await file.read()
-        
-        with fitz.open(stream=file_content, filetype="pdf") as doc:
-            raw_text = "".join(page.get_text() for page in doc)
-            if not raw_text.strip():
-                return JSONResponse(content={"status": "failed", "error": "No text in PDF"}, status_code=400)
-            
-            prompt = f"""Act as an expert resume parser. Analyze the text below and return a structured JSON object.
-            JSON must include: name, email, phone, skills (list), work_experience, projects, summary.
-            Resume:\n---\n{raw_text}\n---"""
 
-            # 👇 FIX: Enable JSON Mode to ensure a clean JSON response
-            model = genai.GenerativeModel(
-                "gemini-2.5-flash",
-                generation_config={"response_mime_type": "application/json"}
-            )
-            
-            safety_settings = {'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE', 'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE', 'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE', 'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE'}
-            response = model.generate_content(prompt, safety_settings=safety_settings)
+        # Write uploaded bytes to a temporary file so parse_resume_with_gemini can open it
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(file_content)
+            tmp_path = tmp.name
 
-            # Now, response.text is guaranteed to be a clean JSON string
-            parsed_data = json.loads(response.text)
+        try:
+            parsed_data = parse_resume_with_gemini(tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
-        # ... (the rest of your function remains the same) ...
+        if not isinstance(parsed_data, dict):
+            return JSONResponse(content={"status": "failed", "error": "Parsing returned non-dict"}, status_code=500)
+
+        if "error" in parsed_data:
+            return JSONResponse(content={"status": "failed", "error": parsed_data["error"]}, status_code=400)
+
+        # store file in GridFS (save original file bytes)
         file_id = fs.put(file_content, filename=file.filename)
-        parsed_data['gridfs_file_id'] = str(file_id)
-        result = db["resumes"].insert_one(parsed_data)
-        parsed_data['_id'] = str(result.inserted_id)
-        resume_id = str(result.inserted_id)
-        push_resumes_to_neo4j()
-        recs = recommend_jobs(resume_id)
-        return {"status": "success", "data": parsed_data, "recommendations": recs}
+
+        # Normalize parsed data into consistent schema
+        normalized = normalize_parsed_resume(parsed_data)
+        if isinstance(normalized, dict) and normalized.get("error"):
+            # if normalization failed, store raw parsed_data under parsed_raw
+            parsed_data_to_store = {"parsed_raw": parsed_data, "note": "normalization_failed"}
+        else:
+            parsed_data_to_store = normalized
+
+        # Attach username and GridFS file id
+        if username:
+            parsed_data_to_store['username'] = username
+        parsed_data_to_store['gridfs_file_id'] = str(file_id)
+
+        # Save into DB (replace if same username exists)
+        if username:
+            existing = db["resumes"].find_one({"username": username})
+            if existing:
+                try:
+                    old_file_id = existing.get("gridfs_file_id")
+                    if old_file_id:
+                        try:
+                            fs.delete(ObjectId(old_file_id))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                db["resumes"].replace_one({"_id": existing["_id"]}, parsed_data_to_store)
+                parsed_data_to_store['_id'] = str(existing["_id"])
+            else:
+                result = db["resumes"].insert_one(parsed_data_to_store)
+                parsed_data_to_store['_id'] = str(result.inserted_id)
+        else:
+            result = db["resumes"].insert_one(parsed_data_to_store)
+            parsed_data_to_store['_id'] = str(result.inserted_id)
+
+        # Sync to Neo4j (best-effort)
+        try:
+            push_resumes_to_neo4j()
+        except Exception:
+            traceback.print_exc()
+
+        resume_id = parsed_data_to_store['_id']
+        try:
+            recs = recommend_jobs(resume_id)
+        except Exception:
+            traceback.print_exc()
+            recs = []
+
+        return {"status": "success", "data": parsed_data_to_store, "recommendations": recs}
     except Exception as e:
         traceback.print_exc()
         return JSONResponse(content={"status": "failed", "error": str(e)}, status_code=500)
-    
+
+
+@app.get("/my_resume/")
+def get_my_resume(username: str):
+    """Return saved resume for this username (if any)."""
+    try:
+        doc = db["resumes"].find_one({"username": username})
+        if not doc:
+            return {"found": False}
+        doc_copy = dict(doc)
+        doc_copy["_id"] = str(doc.get("_id"))
+        return {"found": True, "data": doc_copy}
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(content={"status": "failed", "error": str(e)}, status_code=500)
+
+
+@app.delete("/my_resume/")
+def delete_my_resume(username: str):
+    """Delete saved resume and GridFS file for a username."""
+    try:
+        doc = db["resumes"].find_one({"username": username})
+        if not doc:
+            return {"status": "failed", "message": "No resume found"}
+
+        try:
+            if doc.get("gridfs_file_id"):
+                fs.delete(ObjectId(doc["gridfs_file_id"]))
+        except Exception:
+            pass
+
+        db["resumes"].delete_one({"_id": doc["_id"]})
+        try:
+            push_resumes_to_neo4j()
+        except Exception:
+            traceback.print_exc()
+        return {"status": "success", "message": "Resume deleted"}
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(content={"status": "failed", "error": str(e)}, status_code=500)
 
 # ---------------------------------------------------------------------------
 # 6️⃣ Job Description Skill Extraction (Gemini + MongoDB + Neo4j)
@@ -285,23 +563,23 @@ async def parse_resume(file: UploadFile = File(...)):
 
 def extract_skills_with_gemini(job_description: str):
     prompt = f"""
-    You are an expert career analyst. Extract all technical and soft skills from the job description.
-    ---
-    {job_description}
-    ---
-    Output JSON: {{ "skills": [ "Python", "SQL", ... ] }}
-    """
+You are an expert career analyst. Extract all technical and soft skills from the job description.
+---
+{job_description}
+---
+Output JSON: {{ "skills": [ "Python", "SQL", ... ] }}
+"""
     try:
         model = genai.GenerativeModel(
             "gemini-2.5-flash",
             generation_config={"response_mime_type": "application/json"}
         )
         response = model.generate_content(prompt)
-        data = json.loads(response.text)
+        text = response.text.strip().replace("```json", "").replace("```", "")
+        data = json.loads(text)
         return data.get("skills", [])
     except Exception as e:
-        # 👇 ADD THIS LINE to see the full error in your terminal
-        traceback.print_exc() 
+        traceback.print_exc()
         return {"error": str(e)}
 
 
@@ -320,11 +598,11 @@ async def extract_jd_skills(job_description: str = Form(...)):
         push_jobs_to_neo4j()
         print("✅ Done pushing JD data to Neo4j")
 
-        # Get eligible applicants from Neo4j
         applicants = eligible_applicants(str(doc["_id"]))
 
         return {"status": "success", "data": doc, "applicants": applicants}
     except Exception as e:
+        traceback.print_exc()
         return JSONResponse(content={"status": "failed", "error": str(e)}, status_code=500)
 
 # ---------------------------------------------------------------------------
@@ -352,6 +630,9 @@ def download_resume(file_id: str):
                                  headers={"Content-Disposition": f"attachment; filename=\"{gridfs_file.filename}\""})
     except gridfs.errors.NoFile:
         return JSONResponse(content={"error": "File not found"}, status_code=404)
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 # ---------------------------------------------------------------------------
 # 8️⃣ Root Endpoint

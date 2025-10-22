@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../api";
 import ResumeDisplay from "./ResumeDisplay";
@@ -19,6 +19,39 @@ const ParseResume = () => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const inputRef = useRef(null);
+
+  // Fetch saved resume on mount if username exists in localStorage
+  useEffect(() => {
+    const fetchSaved = async () => {
+      const username = localStorage.getItem("username");
+      if (!username) return;
+
+      try {
+        // Fetch saved resume for this username
+        const res = await API.get("/my_resume/", { params: { username } });
+        if (res.data && res.data.found) {
+          const data = res.data.data;
+          setResumeData(data);
+
+          // If backend didn't send recommendations, try to fetch by resume id
+          if (data && data._id) {
+            try {
+              const recRes = await API.get("/recommend_jobs/", { params: { resume_id: data._id } });
+              const recs = recRes?.data?.recommendations ?? recRes?.data ?? [];
+              setRecommendations(Array.isArray(recs) ? recs : []);
+            } catch (err) {
+              // It's okay if recommendations endpoint isn't available; just log
+              console.warn("Could not fetch recommendations:", err);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching saved resume:", err);
+      }
+    };
+
+    fetchSaved();
+  }, []);
 
   const onFileChange = (f) => {
     setErrorMsg("");
@@ -54,6 +87,10 @@ const ParseResume = () => {
       const formData = new FormData();
       formData.append("file", file);
 
+      // Attach username if available so backend can save the resume for that user
+      const username = localStorage.getItem("username");
+      if (username) formData.append("username", username);
+
       const res = await API.post("/parse_resume/", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -81,8 +118,33 @@ const ParseResume = () => {
     setErrorMsg("");
   };
 
+  // Delete saved resume from server for current user
+  const deleteSavedResume = async () => {
+    const username = localStorage.getItem("username");
+    if (!username) {
+      return alert("No username stored. Please login again.");
+    }
+
+    const ok = window.confirm("Are you sure you want to delete your saved resume from the server?");
+    if (!ok) return;
+
+    try {
+      const res = await API.delete("/my_resume/", { params: { username } });
+      if (res.data && res.data.status === "success") {
+        alert("Saved resume deleted.");
+        clearAll();
+      } else {
+        alert(res.data?.message || "Delete failed.");
+      }
+    } catch (err) {
+      console.error("Delete error:", err);
+      alert("Delete failed. Check console.");
+    }
+  };
+
   // Logout handler
   const handleLogout = () => {
+    // Keep UX simple - clear storage and redirect to login
     localStorage.clear();
     sessionStorage.clear();
     navigate("/"); // redirect to login
@@ -213,6 +275,23 @@ const ParseResume = () => {
                   }}
                 >
                   Reset
+                </button>
+
+                {/* Delete saved resume button */}
+                <button
+                  type="button"
+                  onClick={deleteSavedResume}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 10,
+                    border: "1px solid #ffd6d6",
+                    background: "#fff",
+                    color: "#d12b2b",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Delete Saved Resume
                 </button>
 
                 <div style={{ marginLeft: "auto", color: THEME.muted, alignSelf: "center", fontSize: 13 }}>
