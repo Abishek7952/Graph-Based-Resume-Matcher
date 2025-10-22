@@ -7,186 +7,137 @@ const JobRecommendationCard = ({ job = {}, theme = null }) => {
     surface: "#fff",
   };
 
-  // Extract all possible link fields safely
-  const title = job.job_title || "Untitled Role";
-  const portalLink =
-    (job.company_portal_link &&
-      typeof job.company_portal_link === "string" &&
-      job.company_portal_link.trim() !== "" &&
-      job.company_portal_link.trim()) ||
-    job.url ||
-    "";
+  const {
+    job_title,
+    company_name,
+    description,
+    matchedSkills,
+    url
+  } = job;
 
-  const desc = job.job_description || "";
-  const skillsArray = Array.isArray(job.skills)
-    ? job.skills
-    : typeof job.skills === "string"
-    ? job.skills.split(",").map((s) => s.trim())
-    : [];
+  // parse a compact role/company if job_title contains bracketed company, fallback to props
+  const parsedCompany = company_name || (job_title && (job_title.match(/\[(.*?)\]/)?.[1])) || "Company";
+  // role is a cleaned title
+  const parsedRole = (job_title || "").replace(/\[.*?\]/, "").trim() || "Role";
 
-  console.log("🔗 Job data received:", job);
+  // matchedSkills may be a string or array or number — normalize to array
+  let skillsArray = [];
+  if (Array.isArray(matchedSkills)) skillsArray = matchedSkills;
+  else if (typeof matchedSkills === "string") skillsArray = matchedSkills.split(",").map(s => s.trim()).filter(Boolean);
+  else if (typeof matchedSkills === "number") skillsArray = [`${matchedSkills} matched`];
 
   return (
-    <div
-      style={{
-        background: THEME.surface,
-        borderRadius: 12,
-        padding: 18,
-        boxShadow: "0 6px 18px rgba(8,18,60,0.04)",
-        transition: "transform .16s ease, box-shadow .16s ease",
-        cursor: portalLink ? "pointer" : "default",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-      onClick={() => {
-        if (portalLink) window.open(portalLink, "_blank");
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = "translateY(-4px)";
-        e.currentTarget.style.boxShadow =
-          "0 12px 28px rgba(8,18,60,0.08)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = "translateY(0px)";
-        e.currentTarget.style.boxShadow =
-          "0 6px 18px rgba(8,18,60,0.04)";
-      }}
+    <div style={{
+      background: THEME.surface,
+      borderRadius: 12,
+      padding: 14,
+      boxShadow: "0 6px 18px rgba(8,18,60,0.04)",
+      transition: "transform .16s ease, box-shadow .16s ease",
+      display: "flex",
+      gap: 12,
+      alignItems: "flex-start",
+      cursor: url ? "pointer" : "default"
+    }}
+      onClick={() => { if (url) window.open(url, "_blank"); }}
+      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 12px 28px rgba(8,18,60,0.08)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0px)"; e.currentTarget.style.boxShadow = "0 6px 18px rgba(8,18,60,0.04)"; }}
     >
-      {/* Job Title */}
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: 18, color: "#1a202c" }}>
-            {title}
-          </div>
-        </div>
-        <div
-          style={{
-            background: "#f1f5ff",
-            color: THEME.primary,
-            padding: "6px 10px",
-            borderRadius: 999,
-            fontWeight: 700,
-            fontSize: 13,
-          }}
-        >
-          {skillsArray.length} Skill{skillsArray.length !== 1 ? "s" : ""}
-        </div>
+      {/* Logo / avatar */}
+      <div style={{
+        minWidth: 52,
+        height: 52,
+        borderRadius: 10,
+        background: "linear-gradient(180deg, rgba(15,98,254,0.12), rgba(15,98,254,0.04))",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: 800,
+        color: THEME.primary,
+        fontSize: 18
+      }}>
+        {parsedCompany?.charAt(0) ?? "C"}
       </div>
 
-      {/* Job Description */}
-      {desc && (
-        <div
-          style={{
-            color: THEME.muted,
-            fontSize: 14,
-            lineHeight: 1.4,
-            marginTop: 4,
-          }}
-        >
-          {desc.length > 200 ? `${desc.slice(0, 200)}...` : desc}
-        </div>
-      )}
+      <div style={{ flex: 1 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "baseline", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontWeight: 800 }}>{parsedRole}</div>
+            <div style={{ color: THEME.muted, fontSize: 13 }}>{parsedCompany}</div>
+          </div>
 
-      {/* Skills */}
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          marginTop: 8,
-        }}
-      >
-        {skillsArray.length > 0 ? (
-          skillsArray.map((s, i) => (
-            <div
-              key={i}
-              style={{
-                background: "#eef2ff",
-                color: THEME.primary,
-                borderRadius: 999,
-                padding: "6px 12px",
-                fontSize: 12,
-                fontWeight: 600,
-              }}
-            >
-              {s}
+          <div style={{ textAlign: "right" }}>
+            {/* matched count */}
+            <div style={{
+              padding: "6px 10px",
+              borderRadius: 999,
+              background: "#f1f5ff",
+              color: THEME.primary,
+              fontWeight: 700,
+              fontSize: 13
+            }}>
+              {skillsArray.length} match{skillsArray.length !== 1 ? "es" : ""}
             </div>
-          ))
-        ) : (
-          <div style={{ color: THEME.muted, fontSize: 13 }}>
-            No skills listed
           </div>
-        )}
-      </div>
+        </div>
 
-      {/* Buttons */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginTop: 14,
-          alignItems: "center",
-        }}
-      >
-        {portalLink ? (
-          <>
-            <a
-              href={portalLink}
-              target="_blank"
-              rel="noreferrer"
+        {description && <div style={{ marginTop: 8, color: "#222", fontSize: 13, lineHeight: 1.3 }}>{description.length > 160 ? `${description.slice(0, 160)}...` : description}</div>}
+
+        {/* skills */}
+        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {skillsArray.length ? skillsArray.map((s, idx) => (
+            <div key={idx} style={{
+              padding: "6px 8px",
+              borderRadius: 999,
+              background: "#f7f9ff",
+              color: THEME.primary,
+              fontWeight: 700,
+              fontSize: 12
+            }}>{s}</div>
+          )) : <div style={{ color: THEME.muted, fontSize: 13 }}>No matched skills</div>}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+          {url ? (
+            <a href={url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
               style={{
+                padding: "8px 12px",
                 background: THEME.primary,
                 color: "#fff",
                 borderRadius: 10,
-                padding: "8px 14px",
                 fontWeight: 700,
                 textDecoration: "none",
-                boxShadow: "0 6px 14px rgba(15,98,254,0.2)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              View Job
+                boxShadow: "0 8px 20px rgba(15,98,254,0.12)"
+              }}>
+              Apply
             </a>
-
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                navigator.clipboard
-                  .writeText(portalLink)
-                  .then(() => alert("✅ Job link copied to clipboard!"))
-                  .catch(() => alert("⚠️ Could not copy link."));
-              }}
-              style={{
-                padding: "8px 12px",
-                background: "#fff",
-                border: "1px solid #d1d5db",
-                borderRadius: 10,
-                color: THEME.primary,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Copy Link
-            </button>
-          </>
-        ) : (
-          <button
-            disabled
-            style={{
-              background: "#edf2f7",
-              color: THEME.muted,
-              border: "none",
+          ) : (
+            <button disabled style={{
+              padding: "8px 12px",
+              background: "#eef2ff",
+              color: THEME.primary,
               borderRadius: 10,
-              padding: "8px 14px",
-              fontWeight: 600,
-              opacity: 0.6,
-              cursor: "not-allowed",
-            }}
-          >
-            No Link Available
+              fontWeight: 700,
+              border: "none"
+            }}>No link</button>
+          )}
+
+          <button onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(url ?? ""); alert("Job link copied"); }}
+            style={{
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: "1px solid #eef2ff",
+              background: "#fff",
+              color: THEME.primary,
+              fontWeight: 700,
+              cursor: "pointer"
+            }}>
+            Copy Link
           </button>
-        )}
+
+          <div style={{ marginLeft: "auto", color: "#8892a6", fontSize: 12 }}>
+            {job.posted_date ? job.posted_date : ""}
+          </div>
+        </div>
       </div>
     </div>
   );
