@@ -33,7 +33,7 @@ fs = gridfs.GridFS(db)
 # Neo4j Config
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "12345678")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "vishal2004")
 neo4j_driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 # Password hashing
@@ -324,12 +324,18 @@ def recommend_jobs(resume_id, limit=5):
 
         recommendations = []
         for record in result:
+            job_id = record["job_id"]
+            job_doc = db["JD_skills"].find_one({"_id": ObjectId(job_id)})
+
             recommendations.append({
-                "job_id": record["job_id"],
+                "job_id": job_id,
                 "job_title": record["job_title"],
-                "matchedSkills": record["matchedSkills"]
+                "matchedSkills": record["matchedSkills"],
+                "company_portal_link": job_doc.get("company_portal_link", "") if job_doc else "",
+                "skills": job_doc.get("skills", []) if job_doc else []
             })
     return recommendations
+
 
 
 def eligible_applicants(job_id):
@@ -437,85 +443,72 @@ Return only valid JSON. If a field is missing, you may omit it. Make the structu
 
 
 @app.post("/parse_resume/")
-async def parse_resume(file: UploadFile = File(...), username: str = Form(None)):
-    """User uploads resume -> parse -> save to GridFS -> normalize -> sync -> return recommendations"""
+async def parse_resume(file: UploadFile = File(...)):
+    """User uploads resume -> parse -> save to GridFS -> sync -> return recommendations"""
     try:
         file_content = await file.read()
 
-        # Write uploaded bytes to a temporary file so parse_resume_with_gemini can open it
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(file_content)
-            tmp_path = tmp.name
+        with fitz.open(stream=file_content, filetype="pdf") as doc:
+            raw_text = "".join(page.get_text() for page in doc)
+            if not raw_text.strip():
+                return JSONResponse(content={"status": "failed", "error": "No text in PDF"}, status_code=400)
 
-        try:
-            parsed_data = parse_resume_with_gemini(tmp_path)
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+        prompt = f"""Act as an expert resume parser. Analyze the text below and return a structured JSON object.
+        JSON must include: name, email, phone, skills (list), work_experience, projects, summary.
+        Resume:\n---\n{raw_text}\n---"""
 
-        if not isinstance(parsed_data, dict):
-            return JSONResponse(content={"status": "failed", "error": "Parsing returned non-dict"}, status_code=500)
+        model = genai.GenerativeModel(
+            "gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
 
-        if "error" in parsed_data:
-            return JSONResponse(content={"status": "failed", "error": parsed_data["error"]}, status_code=400)
+        safety_settings = {
+            'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
+            'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE',
+            'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE',
+            'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE'
+        }
 
-        # store file in GridFS (save original file bytes)
+        response = model.generate_content(prompt, safety_settings=safety_settings)
+        parsed_data = json.loads(response.text)
+
         file_id = fs.put(file_content, filename=file.filename)
+        parsed_data['gridfs_file_id'] = str(file_id)
 
-        # Normalize parsed data into consistent schema
-        normalized = normalize_parsed_resume(parsed_data)
-        if isinstance(normalized, dict) and normalized.get("error"):
-            # if normalization failed, store raw parsed_data under parsed_raw
-            parsed_data_to_store = {"parsed_raw": parsed_data, "note": "normalization_failed"}
-        else:
-            parsed_data_to_store = normalized
+        result = db["resumes"].insert_one(parsed_data)
+        parsed_data['_id'] = str(result.inserted_id)
+        resume_id = str(result.inserted_id)
 
-        # Attach username and GridFS file id
-        if username:
-            parsed_data_to_store['username'] = username
-        parsed_data_to_store['gridfs_file_id'] = str(file_id)
+        # Push resume to Neo4j for matching
+        push_resumes_to_neo4j()
 
-        # Save into DB (replace if same username exists)
-        if username:
-            existing = db["resumes"].find_one({"username": username})
-            if existing:
-                try:
-                    old_file_id = existing.get("gridfs_file_id")
-                    if old_file_id:
-                        try:
-                            fs.delete(ObjectId(old_file_id))
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-                db["resumes"].replace_one({"_id": existing["_id"]}, parsed_data_to_store)
-                parsed_data_to_store['_id'] = str(existing["_id"])
-            else:
-                result = db["resumes"].insert_one(parsed_data_to_store)
-                parsed_data_to_store['_id'] = str(result.inserted_id)
-        else:
-            result = db["resumes"].insert_one(parsed_data_to_store)
-            parsed_data_to_store['_id'] = str(result.inserted_id)
+        # ✅ Updated recommendation logic
+        with neo4j_driver.session() as session:
+            recs_result = session.run("""
+                MATCH (r:Resume {id:$resume_id})-[:HAS]->(s:Skill)<-[:REQUIRES]-(j:Job)
+                RETURN j.id AS job_id, j.title AS title, j.link AS company_portal_link, count(s) AS matchedSkills
+                ORDER BY matchedSkills DESC
+                LIMIT 5
+            """, resume_id=resume_id)
 
-        # Sync to Neo4j (best-effort)
-        try:
-            push_resumes_to_neo4j()
-        except Exception:
-            traceback.print_exc()
+            recommendations = []
+            for record in recs_result:
+                job_doc = db["JD_skills"].find_one({"_id": ObjectId(record["job_id"])})
+                if job_doc:
+                    recommendations.append({
+                        "job_id": str(job_doc["_id"]),
+                        "job_title": job_doc.get("job_title", "Untitled Job"),
+                        "company_portal_link": job_doc.get("company_portal_link", ""),
+                        "skills": job_doc.get("skills", []),
+                        "matchedSkills": record["matchedSkills"]
+                    })
 
-        resume_id = parsed_data_to_store['_id']
-        try:
-            recs = recommend_jobs(resume_id)
-        except Exception:
-            traceback.print_exc()
-            recs = []
+        return {"status": "success", "data": parsed_data, "recommendations": recommendations}
 
-        return {"status": "success", "data": parsed_data_to_store, "recommendations": recs}
     except Exception as e:
         traceback.print_exc()
         return JSONResponse(content={"status": "failed", "error": str(e)}, status_code=500)
+
 
 
 @app.get("/my_resume/")
@@ -584,26 +577,75 @@ Output JSON: {{ "skills": [ "Python", "SQL", ... ] }}
 
 
 @app.post("/extract_jd_skills/")
-async def extract_jd_skills(job_description: str = Form(...)):
-    """Recruiter posts JD -> extract skills -> save -> sync Neo4j -> return eligible applicants"""
+async def extract_jd_skills(
+    job_description: str = Form(...),
+    job_title: str = Form(...),
+    company_portal_link: str = Form(...)
+):
+    """
+    Recruiter posts JD -> extract skills -> save -> sync Neo4j -> return eligible applicants
+    Ensures job_title and company_portal_link are saved and visible in frontend.
+    """
     try:
+        # Extract key skills using Gemini
         skills = extract_skills_with_gemini(job_description)
         if isinstance(skills, dict) and "error" in skills:
             return JSONResponse(content={"status": "failed", "error": skills["error"]}, status_code=400)
 
-        doc = {"job_description": job_description.strip(), "skills": skills}
+        # Prepare JD document for MongoDB
+        doc = {
+            "job_title": job_title.strip(),
+            "company_portal_link": company_portal_link.strip(),
+            "job_description": job_description.strip(),
+            "skills": skills
+        }
+
+        # Save to MongoDB
         result = db["JD_skills"].insert_one(doc)
         doc["_id"] = str(result.inserted_id)
 
-        push_jobs_to_neo4j()
-        print("✅ Done pushing JD data to Neo4j")
+        # Sync to Neo4j with proper job_title field
+        with neo4j_driver.session() as session:
+            session.run("""
+                MERGE (j:Job {id:$job_id})
+                SET j.title=$job_title, j.link=$company_portal_link
+            """, job_id=str(result.inserted_id),
+                 job_title=job_title.strip(),
+                 company_portal_link=company_portal_link.strip())
 
-        applicants = eligible_applicants(str(doc["_id"]))
+            for skill in skills:
+                session.run("MERGE (s:Skill {name:$skill})", skill=skill)
+                session.run("""
+                    MATCH (j:Job {id:$job_id}), (s:Skill {name:$skill})
+                    MERGE (j)-[:REQUIRES]->(s)
+                """, job_id=str(result.inserted_id), skill=skill)
 
-        return {"status": "success", "data": doc, "applicants": applicants}
+        print(f"✅ JD pushed to Neo4j: {job_title}")
+
+        # Find eligible applicants based on skills
+        applicants = eligible_applicants(str(result.inserted_id))
+
+        # Return complete JD info and matched applicants
+        return {
+            "status": "success",
+            "data": {
+                "_id": str(result.inserted_id),
+                "job_title": job_title.strip(),
+                "company_portal_link": company_portal_link.strip(),
+                "job_description": job_description.strip(),
+                "skills": skills
+            },
+            "applicants": applicants
+        }
+
     except Exception as e:
         traceback.print_exc()
-        return JSONResponse(content={"status": "failed", "error": str(e)}, status_code=500)
+        return JSONResponse(
+            content={"status": "failed", "error": str(e)},
+            status_code=500
+        )
+
+
 
 # ---------------------------------------------------------------------------
 # 7️⃣ Public Endpoints for Frontend

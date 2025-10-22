@@ -393,17 +393,71 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
                   else if (typeof item === "object") {
                     title = item.title || item.role || item.position || "";
                     company = item.company || item.employer || item.organization || "";
-                    dates = item.dates || item.duration || item.period || "";
-                    if (item.responsibilities && Array.isArray(item.responsibilities)) desc = item.responsibilities.join(". ");
-                    else if (item.responsibilities && typeof item.responsibilities === "string") desc = item.responsibilities;
-                    else if (item.description && typeof item.description === "string") desc = item.description;
+                    dates = item.dates || item.duration || item.period || item.timeline || "";
+                    // Try to find all possible keys for descriptions or responsibilities
+                    if (Array.isArray(item.responsibilities))
+                      desc = item.responsibilities.join(". ");
+                    else if (typeof item.responsibilities === "string")
+                      desc = item.responsibilities;
+                    else if (item.description)
+                      desc =
+                        typeof item.description === "string"
+                          ? item.description
+                          : Array.isArray(item.description)
+                          ? item.description.join(". ")
+                          : JSON.stringify(item.description);
+                    else if (item.summary)
+                      desc = Array.isArray(item.summary)
+                        ? item.summary.join(". ")
+                        : String(item.summary);
+                    else if (item.achievements)
+                      desc = Array.isArray(item.achievements)
+                        ? item.achievements.join(". ")
+                        : String(item.achievements);
                   }
 
                   return (
-                    <div key={i} style={{ padding: 10, borderRadius: 8, background: "#fff", boxShadow: "0 4px 12px rgba(12,20,50,0.03)" }}>
-                      <div style={{ fontWeight: 700 }}>{title || "Job Title"}</div>
-                      <div style={{ color: THEME.muted, fontSize: 12 }}>{company || "Company"} · {dates}</div>
-                      {desc && <div style={{ marginTop: 8, fontSize: 13 }}>{desc.length > 160 ? `${desc.slice(0, 160)}...` : desc}</div>}
+                    <div
+                      key={i}
+                      style={{
+                        padding: 12,
+                        borderRadius: 8,
+                        background: "#fff",
+                        boxShadow: "0 4px 12px rgba(12,20,50,0.05)",
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 15 }}>
+                        {title || "Job Title"}
+                      </div>
+                      <div style={{ color: THEME.muted, fontSize: 12 }}>
+                        {company || "Company"} {dates ? `· ${dates}` : ""}
+                      </div>
+                      {desc ? (
+                        <ul
+                          style={{
+                            marginTop: 8,
+                            fontSize: 13,
+                            color: "#111",
+                            paddingLeft: 18,
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          {String(desc)
+                            .split(/[.•]\s+|[\n]/)
+                            .filter(Boolean)
+                            .map((point, idx2) => (
+                              <li key={idx2}>
+                                {point.trim().endsWith(".")
+                                  ? point.trim()
+                                  : point.trim() + "."}
+                              </li>
+                            ))}
+                        </ul>
+                      ) : (
+                        <div style={{ marginTop: 8, fontSize: 13, color: THEME.muted }}>
+                          No description available.
+                        </div>
+                      )}
                     </div>
                   );
                 })
@@ -412,17 +466,8 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
           </div>
         </div>
       </div>
-
-      {/* If there are other unknown keys, show them at the bottom for debugging */}
-      {data.parsed_raw && (
-        <div style={{ marginTop: 18 }}>
-          <div style={{ color: THEME.muted, marginBottom: 8 }}>Parsed Raw (debug)</div>
-          <pre style={{ whiteSpace: "pre-wrap", background: "#fbfdff", padding: 12, borderRadius: 8, maxHeight: 220, overflow: "auto" }}>
-            {JSON.stringify(data.parsed_raw || data, null, 2)}
-          </pre>
-        </div>
-      )}
     </div>
+
   );
 };
 
