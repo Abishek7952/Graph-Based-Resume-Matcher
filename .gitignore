@@ -4,3 +4,6 @@
 .venv/
 .env
 venv/
+# Python compiled files
+*.pyc
+__pycache__/
