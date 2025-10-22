@@ -142,48 +142,6 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
     );
   };
 
-  // Safe render for general values (arrays, objects, primitives)
-  const renderValue = (v) => {
-    if (v === null || typeof v === "undefined" || v === "") return "—";
-    if (Array.isArray(v)) {
-      if (v.length === 0) return "—";
-      // If array of objects, render each object nicely
-      if (typeof v[0] === "object") {
-        return (
-          <div style={{ display: "grid", gap: 8 }}>
-            {v.map((item, idx) => (
-              <div key={idx} style={{ padding: 8, background: "#fbfdff", borderRadius: 6 }}>
-                {Object.entries(item).map(([k, val], i) => (
-                  <div key={i}>
-                    <strong>{k.replace(/_/g, " ")}:</strong>{" "}
-                    {typeof val === "object" ? JSON.stringify(val) : String(val)}
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        );
-      }
-      // else simple array of strings/numbers
-      return v.join(", ");
-    }
-    if (typeof v === "object") {
-      // If it's the education array disguised as object, try to render keys
-      // But basic fallback: render JSON prettified
-      return (
-        <div style={{ fontSize: 13 }}>
-          {Object.entries(v).map(([k, val], i) => (
-            <div key={i}>
-              <strong>{k.replace(/_/g, " ")}:</strong>{" "}
-              {Array.isArray(val) ? val.join(", ") : typeof val === "object" ? JSON.stringify(val) : String(val)}
-            </div>
-          ))}
-        </div>
-      );
-    }
-    // primitive
-    return String(v);
-  };
 
   // Build normalized fields for UI
   const personal = extractFromPersonalInfo(data);
@@ -466,6 +424,16 @@ const ResumeDisplay = ({ data = {}, theme = null }) => {
           </div>
         </div>
       </div>
+
+      {/* If there are other unknown keys, show them at the bottom for debugging */}
+      {data.parsed_raw && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ color: THEME.muted, marginBottom: 8 }}>Parsed Raw (debug)</div>
+          <pre style={{ whiteSpace: "pre-wrap", background: "#fbfdff", padding: 12, borderRadius: 8, maxHeight: 220, overflow: "auto" }}>
+            {JSON.stringify(data.parsed_raw || data, null, 2)}
+          </pre>
+        </div>
+      )}
     </div>
 
   );
