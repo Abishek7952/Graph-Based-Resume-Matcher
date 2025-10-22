@@ -404,4 +404,3 @@ const styles = {
 };
 
 export default ExtractJD;
-
