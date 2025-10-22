@@ -20,4 +20,5 @@ echo.
 echo ===========================================
 echo ✅ Both backend and frontend have been launched successfully!
 echo ===========================================
+
 pause
