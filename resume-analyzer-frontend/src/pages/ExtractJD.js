@@ -20,7 +20,9 @@ const Icons = {
 };
 
 const ExtractJD = () => {
-  const navigate = useNavigate(); // <-- added for logout navigation
+  const navigate = useNavigate();
+  const [jobTitle, setJobTitle] = useState("");
+  const [companyLink, setCompanyLink] = useState("");
   const [jobDescription, setJobDescription] = useState("");
   const [skills, setSkills] = useState([]);
   const [applicants, setApplicants] = useState([]);
@@ -36,6 +38,9 @@ const ExtractJD = () => {
 
     const formData = new FormData();
     formData.append("job_description", jobDescription);
+    formData.append("job_title", jobTitle);
+    formData.append("company_portal_link", companyLink);
+    
 
     try {
       const res = await API.post("/extract_jd_skills/", formData);
@@ -91,14 +96,32 @@ const ExtractJD = () => {
               <h3 style={styles.subtitle}>Post Job Description</h3>
             </div>
             <form onSubmit={handleSubmit}>
+              <input
+                type="text"
+                placeholder="Enter Job Title"
+                style={styles.input}
+                value={jobTitle}
+                onChange={(e) => setJobTitle(e.target.value)}
+                required
+              />
+              <input
+                type="text"
+                placeholder="Enter Company Portal Link"
+                style={styles.input}
+                value={companyLink}
+                onChange={(e) => setCompanyLink(e.target.value)}
+                required
+              />
+
               <textarea
                 style={styles.textarea}
                 rows="12"
-                placeholder="Paste the full job description here to discover top talent..."
+                placeholder="Paste the full job description here..."
                 value={jobDescription}
                 onChange={(e) => setJobDescription(e.target.value)}
                 required
               />
+
               <button style={styles.button} type="submit" disabled={loading}>
                 {loading ? "Analyzing..." : (
                   <>
@@ -366,6 +389,18 @@ const styles = {
         animation: 'spin 1s ease infinite',
         marginBottom: '15px',
     },
+    input: {
+      width: "100%",
+      padding: "12px 15px",
+      border: "1px solid #CBD5E0",
+      borderRadius: "8px",
+      fontSize: "16px",
+      marginBottom: "15px",
+      fontFamily: "inherit",
+      transition: "border-color 0.3s, box-shadow 0.3s",
+      boxSizing: "border-box",
+    },
+    
 };
 
 export default ExtractJD;

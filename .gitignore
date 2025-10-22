@@ -1,6 +1,10 @@
 *.pdf
 *.csv
 # Ignore Python virtual environment
-.venv/
+venv
 .env
-venv/
+# Ignore compiled Python files
+*.pyc
+./__pycache__
+__pycache__/
+*.pyc
