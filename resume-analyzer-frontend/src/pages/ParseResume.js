@@ -19,6 +19,27 @@ const ParseResume = () => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const inputRef = useRef(null);
+  
+  // 🚀 NEW: State for scoring mode toggle
+  const [scoreMode, setScoreMode] = useState("expanded"); // 'expanded' or 'direct'
+  const [recLoading, setRecLoading] = useState(false); // Separate loading for recs
+
+  // 🚀 MODIFIED: This function can now be called to fetch/re-fetch recs
+  const fetchRecommendations = async (resumeId, mode) => {
+    if (!resumeId) return;
+    setRecLoading(true);
+    try {
+      const recRes = await API.get("/recommend_jobs/", {
+        params: { resume_id: resumeId, mode: mode },
+      });
+      const recs = recRes?.data?.recommendations ?? recRes?.data ?? [];
+      setRecommendations(Array.isArray(recs) ? recs : []);
+    } catch (err) {
+      console.warn("Could not fetch recommendations:", err);
+    } finally {
+      setRecLoading(false);
+    }
+  };
 
   // Fetch saved resume on mount if username exists in localStorage
   useEffect(() => {
@@ -32,17 +53,9 @@ const ParseResume = () => {
         if (res.data && res.data.found) {
           const data = res.data.data;
           setResumeData(data);
-
-          // If backend didn't send recommendations, try to fetch by resume id
+          // Fetch initial recommendations using the default scoreMode
           if (data && data._id) {
-            try {
-              const recRes = await API.get("/recommend_jobs/", { params: { resume_id: data._id } });
-              const recs = recRes?.data?.recommendations ?? recRes?.data ?? [];
-              setRecommendations(Array.isArray(recs) ? recs : []);
-            } catch (err) {
-              // It's okay if recommendations endpoint isn't available; just log
-              console.warn("Could not fetch recommendations:", err);
-            }
+            fetchRecommendations(data._id, scoreMode);
           }
         }
       } catch (err) {
@@ -51,7 +64,8 @@ const ParseResume = () => {
     };
 
     fetchSaved();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only on mount
 
   const onFileChange = (f) => {
     setErrorMsg("");
@@ -95,11 +109,14 @@ const ParseResume = () => {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
+      // /parse_resume/ ALWAYS returns expanded recommendations by default
       const parsed = res?.data?.data ?? res?.data ?? null;
       const recs = res?.data?.recommendations ?? res?.recommendations ?? [];
 
       setResumeData(parsed);
       setRecommendations(Array.isArray(recs) ? recs : []);
+      // After upload, set mode to 'expanded'
+      setScoreMode("expanded");
     } catch (err) {
       console.error("Upload/parse error:", err);
       setErrorMsg(
@@ -149,6 +166,27 @@ const ParseResume = () => {
     sessionStorage.clear();
     navigate("/"); // redirect to login
   };
+
+  // 🚀 NEW: Handler for changing the score mode
+  const handleScoreModeChange = (newMode) => {
+    if (newMode === scoreMode) return; // No change
+    setScoreMode(newMode);
+    if (resumeData && resumeData._id) {
+      fetchRecommendations(resumeData._id, newMode);
+    }
+  };
+
+  // 🚀 NEW: Styles for the toggle buttons
+  const toggleButtonStyle = (mode) => ({
+    padding: "6px 12px",
+    borderRadius: 8,
+    border: "1px solid #e6e9ee",
+    background: scoreMode === mode ? THEME.primary : THEME.surface,
+    color: scoreMode === mode ? THEME.surface : THEME.muted,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontSize: 12,
+  });
 
   return (
     <div style={{ padding: 28, background: THEME.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, Arial", position: "relative" }}>
@@ -243,7 +281,7 @@ const ParseResume = () => {
                 />
               </div>
 
-              <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 14 }}>
                 <button
                   type="submit"
                   disabled={loading}
@@ -333,14 +371,53 @@ const ParseResume = () => {
             boxShadow: "0 6px 20px rgba(15,26,57,0.04)",
             marginBottom: 16
           }}>
-            <h4 style={{ margin: 0 }}>🎯 Job Recommendations</h4>
-            <div style={{ color: THEME.muted, fontSize: 13, marginTop: 6 }}>
-              Matches are scored from keywords in your resume. Click Apply to open job link.
+            {/* 🚀 MODIFIED: Title/Toggle row */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h4 style={{ margin: 0 }}>🎯 Job Recommendations</h4>
+              
+              {/* 🚀 NEW LINK TO DEBUGGER */}
+              <a href="/explore" target="_blank" rel="noopener noreferrer" style={{fontSize: 12}}>
+                Skill Explorer
+              </a>
+              {/* 🚀 END NEW LINK */}
+              
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button 
+                  style={toggleButtonStyle('expanded')} 
+                  onClick={() => handleScoreModeChange('expanded')}
+                  disabled={recLoading}
+                >
+                  Expanded
+                </button>
+                <button 
+                  style={toggleButtonStyle('direct')} 
+                  onClick={() => handleScoreModeChange('direct')}
+                  disabled={recLoading}
+                >
+                  Direct
+                </button>
+              </div>
+            </div>
+            <div style={{ color: THEME.muted, fontSize: 13, marginTop: 10 }}>
+              {scoreMode === 'expanded'
+                ? 'Showing expanded score (direct + related skills).'
+                : 'Showing direct skill matches only.'}
             </div>
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>
-            {recommendations.length === 0 ? (
+            {/* 🚀 NEW: Loading state for recommendations */}
+            {recLoading ? (
+              <div style={{
+                background: THEME.surface,
+                padding: 18,
+                borderRadius: 12,
+                textAlign: "center",
+                color: THEME.muted
+              }}>
+                Loading recommendations...
+              </div>
+            ) : recommendations.length === 0 ? (
               <div style={{
                 background: THEME.surface,
                 padding: 18,
@@ -352,7 +429,12 @@ const ParseResume = () => {
               </div>
             ) : (
               recommendations.map((job, i) => (
-                <JobRecommendationCard key={i} job={job} theme={THEME} />
+                <JobRecommendationCard 
+                  key={`${scoreMode}-${job.job_id}`} // Use scoreMode and job_id in key to force re-render
+                  job={job} 
+                  theme={THEME} 
+                  resume_id={resumeData?._id} 
+                />
               ))
             )}
           </div>
