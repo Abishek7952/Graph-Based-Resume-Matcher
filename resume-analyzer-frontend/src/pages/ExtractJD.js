@@ -43,6 +43,7 @@ const ExtractJD = () => {
     
 
     try {
+      // API now returns applicants with weightedScore, directScore, relatedScore
       const res = await API.post("/extract_jd_skills/", formData);
       setSkills(res.data.data.skills || []);
       setApplicants(res.data.applicants || []);
@@ -191,9 +192,16 @@ const ExtractJD = () => {
                         {(r.summary || 'No summary provided.').substring(0, 250)}
                         {r.summary && r.summary.length > 250 ? '...' : ''}
                       </p>
+                      
+                      {/* 🚀 MODIFIED: Updated matchPill to show new weighted score */}
                       <div style={styles.matchPill}>
-                        ✨ {r.matchedSkills} Skills Matched
+                        ✨ {r.weightedScore.toFixed(1)} Score
                       </div>
+                      {/* 🚀 NEW: Added score breakdown */}
+                      <div style={{...styles.matchPill, background: 'linear-gradient(135deg, #EBF8FF, #BEE3F8)', color: '#2C5282', marginLeft: '10px'}}>
+                         ({r.directScore} direct, {r.relatedScore} related)
+                      </div>
+
                     </div>
                   ))}
                 </div>
@@ -404,4 +412,3 @@ const styles = {
 };
 
 export default ExtractJD;
-
